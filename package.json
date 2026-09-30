@@ -1,0 +1,36 @@
+{
+  "name": "eventtracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "EventTracker — a modern glassmorphism event discovery and social platform",
+  "author": "EventTracker",
+  "license": "MIT",
+  "workspaces": [
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "node server/index.js",
+    "dev:client": "npm run dev --workspace client",
+    "build": "npm run build --workspace client",
+    "start": "node server/index.js",
+    "seed": "node server/seed.js",
+    "reset-db": "node server/seed.js --reset"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.4.0",
+    "socket.io": "^4.8.1",
+    "sql.js": "^1.14.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

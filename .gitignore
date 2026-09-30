@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+client/dist/
+
+# Local environment
+.env
+
+# Database (re-create with `npm run seed`)
+server/data/*.db
+server/data/*.db-wal
+server/data/*.db-shm
+
+# Runtime uploads (seeded SVG artwork IS committed under uploads/)
+server/uploads/covers/*.png
+server/uploads/covers/*.jpg
+server/uploads/covers/*.jpeg
+server/uploads/covers/*.webp
+server/uploads/avatars/*.png
+server/uploads/avatars/*.jpg
+server/uploads/misc/
+
+# Logs & OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+*.swp

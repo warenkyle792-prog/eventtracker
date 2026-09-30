@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#e64980"/><stop offset="100%" stop-color="#fcc2d7"/>
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" fill="url(#g)"/>
+  <circle cx="190" cy="40" r="90" fill="#ffffff" opacity="0.14"/>
+  <circle cx="30" cy="210" r="80" fill="#000000" opacity="0.14"/>
+  <text x="120" y="152" font-family="'Segoe UI', Arial, sans-serif" font-size="84" font-weight="700"
+        fill="#ffffff" text-anchor="middle" opacity="0.92">EP</text>
+</svg>
