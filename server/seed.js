@@ -1,444 +1,969 @@
 /**
- * EventTracker seed — creates demo categories, users, events, follows,
- * RSVPs, comments and chat threads. Generated SVG covers/avatars are
- * written to server/uploads so the app looks alive with zero external assets.
+ * EventTracker seed — demo dataset.
  *
- *   npm run seed          # seeds a fresh database
- *   npm run reset-db      # wipes the database and re-seeds
+ *   npm run seed        (skips when data already exists)
+ *   npm run reset-db    (wipes and re-seeds)
+ *
+ * Everything is generated locally: cover art and avatars are written as SVG
+ * files into server/uploads, so the app looks complete with zero external
+ * assets or network access.
+ *
+ * Prices are in Kenyan Shillings (KES) and payments use the same ledger the
+ * live M-Pesa / card integrations write to.
  */
 const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 
 const DATA_DIR = path.join(__dirname, 'data');
+
+/**
+ * Platform commission on ticket sales, in percent of the ticket subtotal.
+ * Mirrors the `service_fee_percent` setting the payment flow reads, so the
+ * seeded ledger carries the same fee an organiser would pay live.
+ */
+const SERVICE_FEE_PERCENT = 5;
 const DB_FILE = path.join(DATA_DIR, 'eventtracker.db');
 
 if (process.argv.includes('--reset')) {
   for (const suffix of ['', '-wal', '-shm']) fs.rmSync(DB_FILE + suffix, { force: true });
-  console.log('✔ Database wiped.');
+  console.log('· existing database removed');
 }
 
 const db = require('./db');
+const ticketService = require('./services/tickets');
 
-const existing = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+async function main() {
+  await require('./db').initializeDatabase();
+
+  const existing = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
 if (existing > 0) {
   console.log('Database already contains data. Use "npm run reset-db" to wipe and re-seed.');
   process.exit(0);
 }
 
-/* ------------------------------------------------------------------ */
-/* SVG asset generators                                                */
-/* ------------------------------------------------------------------ */
-const UPLOADS = path.join(__dirname, 'uploads');
+/* ------------------------------------------------------------------ *
+ * Helpers
+ * ------------------------------------------------------------------ */
+
+const { UPLOADS_DIR: UPLOADS } = require('./paths');
 const COVERS = path.join(UPLOADS, 'covers');
 const AVATARS = path.join(UPLOADS, 'avatars');
-for (const dir of [UPLOADS, COVERS, AVATARS]) fs.mkdirSync(dir, { recursive: true });
+const VIDEOS = path.join(UPLOADS, 'videos');
+for (const dir of [UPLOADS, COVERS, AVATARS, VIDEOS]) fs.mkdirSync(dir, { recursive: true });
 
-function coverSVG(colors, label) {
-  const [c1, c2, c3] = colors;
-  const safeLabel = String(label).toUpperCase().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+const sqlTime = (date) => new Date(date).toISOString().slice(0, 19).replace('T', ' ');
+
+/** Future date helper — `days` from now, at a given hour. */
+function at(days, hour = 19, minutes = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  d.setHours(hour, minutes, 0, 0);
+  return d;
+}
+
+function pick(list, index) {
+  return list[index % list.length];
+}
+
+/**
+ * Editorial cover art: a muted duotone base, one geometric motif and a
+ * restrained corner wordmark. Deliberately low-contrast so event photos and
+ * text sit comfortably on top.
+ */
+function coverSVG({ from, to, motif = 'waves', label = '', tone = 'dark' }) {
+  const text = String(label).toUpperCase().slice(0, 22);
+  const ink = tone === 'dark' ? '#ffffff' : '#141414';
+  const inkOpacity = tone === 'dark' ? 0.62 : 0.55;
+
+  const motifs = {
+    waves: `
+      <path d="M0 430 Q 300 370 600 430 T 1200 430" stroke="${ink}" stroke-opacity="0.14" stroke-width="1.5" fill="none"/>
+      <path d="M0 480 Q 300 420 600 480 T 1200 480" stroke="${ink}" stroke-opacity="0.10" stroke-width="1.5" fill="none"/>
+      <path d="M0 530 Q 300 470 600 530 T 1200 530" stroke="${ink}" stroke-opacity="0.07" stroke-width="1.5" fill="none"/>`,
+    rings: `
+      <g fill="none" stroke="${ink}" stroke-opacity="0.12">
+        <circle cx="880" cy="250" r="150" stroke-width="1.5"/>
+        <circle cx="880" cy="250" r="105" stroke-width="1.5"/>
+        <circle cx="880" cy="250" r="62" stroke-width="1.5"/>
+      </g>`,
+    grid: `
+      <g stroke="${ink}" stroke-opacity="0.08" stroke-width="1">
+        ${Array.from({ length: 9 }, (_, i) => `<line x1="${140 + i * 110}" y1="120" x2="${140 + i * 110}" y2="560"/>`).join('')}
+        ${Array.from({ length: 5 }, (_, i) => `<line x1="120" y1="${140 + i * 100}" x2="1080" y2="${140 + i * 100}"/>`).join('')}
+      </g>`,
+    steps: `
+      <g fill="${ink}" fill-opacity="0.07">
+        <rect x="150" y="380" width="150" height="180"/>
+        <rect x="330" y="320" width="150" height="240"/>
+        <rect x="510" y="260" width="150" height="300"/>
+        <rect x="690" y="200" width="150" height="360"/>
+        <rect x="870" y="150" width="150" height="410"/>
+      </g>`,
+    arcs: `
+      <g fill="none" stroke="${ink}" stroke-opacity="0.13" stroke-width="1.5">
+        <path d="M120 560 A 300 300 0 0 1 420 260"/>
+        <path d="M320 560 A 300 300 0 0 1 620 260"/>
+        <path d="M520 560 A 300 300 0 0 1 820 260"/>
+      </g>`,
+  };
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="${c1}"/><stop offset="55%" stop-color="${c2}"/><stop offset="100%" stop-color="${c3}"/>
+    <linearGradient id="base" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="${from}"/>
+      <stop offset="100%" stop-color="${to}"/>
     </linearGradient>
-    <filter id="blur"><feGaussianBlur stdDeviation="60"/></filter>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.55"/><stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    <linearGradient id="veil" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="45%" stop-color="#000" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.42"/>
+    </linearGradient>
+    <radialGradient id="sheen" cx="0.22" cy="0.18" r="0.75">
+      <stop offset="0%" stop-color="#fff" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#fff" stop-opacity="0"/>
     </radialGradient>
   </defs>
-  <rect width="1200" height="675" fill="url(#bg)"/>
-  <ellipse cx="920" cy="120" rx="380" ry="260" fill="#ffffff" opacity="0.16" filter="url(#blur)"/>
-  <ellipse cx="180" cy="560" rx="420" ry="300" fill="#000000" opacity="0.22" filter="url(#blur)"/>
-  <circle cx="860" cy="480" r="190" fill="url(#glow)" opacity="0.75"/>
-  <g fill="none" stroke="#ffffff" stroke-opacity="0.20">
-    <circle cx="240" cy="180" r="120" stroke-width="1.5"/>
-    <circle cx="240" cy="180" r="84" stroke-width="1.5"/>
-    <circle cx="1020" cy="250" r="46" stroke-width="1.5"/>
-    <path d="M0 520 Q 300 430 600 520 T 1200 520" stroke-width="2"/>
-    <path d="M0 560 Q 300 470 600 560 T 1200 560" stroke-width="1.2"/>
-  </g>
-  <g opacity="0.28" fill="#ffffff">
-    <circle cx="420" cy="120" r="6"/><circle cx="520" cy="330" r="4"/><circle cx="180" cy="380" r="5"/>
-    <circle cx="760" cy="90" r="4"/><circle cx="1120" cy="540" r="6"/><circle cx="640" cy="620" r="4"/>
-    <circle cx="330" cy="640" r="3"/><circle cx="980" cy="140" r="3"/>
-  </g>
-  <text x="64" y="612" font-family="Georgia, 'Times New Roman', serif" font-size="34" fill="#ffffff" opacity="0.85" letter-spacing="6">${safeLabel}</text>
+  <rect width="1200" height="675" fill="url(#base)"/>
+  <rect width="1200" height="675" fill="url(#sheen)"/>
+  ${motifs[motif] || motifs.waves}
+  <rect width="1200" height="675" fill="url(#veil)"/>
+  ${text ? `<text x="72" y="596" font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="30" letter-spacing="7" fill="${ink}" fill-opacity="${inkOpacity}">${text}</text>` : ''}
 </svg>`;
 }
 
-function avatarSVG(colors, initials) {
-  const [c1, c2] = colors;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="${c1}"/><stop offset="100%" stop-color="${c2}"/>
-    </linearGradient>
-  </defs>
-  <rect width="240" height="240" fill="url(#g)"/>
-  <circle cx="190" cy="40" r="90" fill="#ffffff" opacity="0.14"/>
-  <circle cx="30" cy="210" r="80" fill="#000000" opacity="0.14"/>
-  <text x="120" y="152" font-family="'Segoe UI', Arial, sans-serif" font-size="84" font-weight="700"
-        fill="#ffffff" text-anchor="middle" opacity="0.92">${initials}</text>
+/** Profile artwork: initials on a muted field. */
+function avatarSVG(initials, bg, fg = '#ffffff') {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="${bg}"/>
+  <circle cx="196" cy="60" r="86" fill="#ffffff" fill-opacity="0.07"/>
+  <text x="50%" y="54%" text-anchor="middle" dominant-baseline="middle"
+        font-family="Inter, 'Helvetica Neue', Arial, sans-serif" font-size="96" font-weight="600"
+        fill="${fg}" fill-opacity="0.92">${initials}</text>
 </svg>`;
 }
 
-/* ------------------------------------------------------------------ */
-/* Categories                                                          */
-/* ------------------------------------------------------------------ */
-const categories = [
-  { name: 'Music', slug: 'music', icon: 'music', color: '#7c5cff', gradient: 'linear-gradient(135deg,#7c5cff,#c86dd7)', colors: ['#4f2ec9', '#7c5cff', '#c86dd7'], description: 'Concerts, festivals, DJ sets and live sessions' },
-  { name: 'Tech', slug: 'tech', icon: 'cpu', color: '#00d4ff', gradient: 'linear-gradient(135deg,#00d4ff,#3f7ef7)', colors: ['#0a2a5e', '#00a8e8', '#3f7ef7'], description: 'Hackathons, demos, AI nights and dev meetups' },
-  { name: 'Arts & Culture', slug: 'arts', icon: 'palette', color: '#ff5c8a', gradient: 'linear-gradient(135deg,#ff5c8a,#ff9d6c)', colors: ['#8e2149', '#ff5c8a', '#ff9d6c'], description: 'Galleries, theatre, film screenings and poetry' },
-  { name: 'Food & Drink', slug: 'food', icon: 'utensils', color: '#ffa94d', gradient: 'linear-gradient(135deg,#ff922b,#ffd43b)', colors: ['#b3540a', '#ff922b', '#ffd43b'], description: 'Tastings, pop-ups, supper clubs and markets' },
-  { name: 'Sports & Fitness', slug: 'sports', icon: 'dumbbell', color: '#38d9a9', gradient: 'linear-gradient(135deg,#12b886,#38d9a9)', colors: ['#0b6b4f', '#12b886', '#63e6be'], description: 'Runs, tournaments, yoga flows and watch parties' },
-  { name: 'Business', slug: 'business', icon: 'briefcase', color: '#4dabf7', gradient: 'linear-gradient(135deg,#3b5bdb,#4dabf7)', colors: ['#22317a', '#3b5bdb', '#74c0fc'], description: 'Networking, startup pitches and leadership summits' },
-  { name: 'Wellness', slug: 'wellness', icon: 'heart', color: '#f783ac', gradient: 'linear-gradient(135deg,#e64980,#f783ac)', colors: ['#8c2a55', '#e64980', '#fcc2d7'], description: 'Mindfulness, retreats, breathwork and sound baths' },
-  { name: 'Community', slug: 'community', icon: 'users', color: '#69db7c', gradient: 'linear-gradient(135deg,#2f9e44,#69db7c)', colors: ['#1d5c2c', '#2f9e44', '#b2f2bb'], description: 'Meetups, volunteer days, markets and causes' },
-];
-
-const catId = {};
-{
-  const insert = db.prepare('INSERT INTO categories (name, slug, description, icon, color, gradient) VALUES (?, ?, ?, ?, ?, ?)');
-  for (const c of categories) {
-    const info = insert.run(c.name, c.slug, c.description, c.icon, c.color, c.gradient);
-    catId[c.slug] = info.lastInsertRowid;
-  }
-}
-console.log(`✔ ${categories.length} categories`);
-
-/* ------------------------------------------------------------------ */
-/* Users                                                               */
-/* ------------------------------------------------------------------ */
-const people = [
-  { name: 'Amara Okafor', username: 'amara', email: 'amara@eventtracker.app', bio: 'Community builder & festival curator. Bringing people together one event at a time.', location: 'Nairobi, KE', colors: ['#7c5cff', '#00d4ff'] },
-  { name: 'Daniel Reyes', username: 'daniel', email: 'daniel@eventtracker.app', bio: 'Indie music promoter. Vinyl collector. Sound engineer by night.', location: 'London, UK', colors: ['#ff5c8a', '#ff9d6c'] },
-  { name: 'Mei Lin', username: 'mei', email: 'mei@eventtracker.app', bio: 'AI researcher and hackathon organizer. I love demos with lasers.', location: 'Singapore, SG', colors: ['#00d4ff', '#3f7ef7'] },
-  { name: 'Sofia Bianchi', username: 'sofia', email: 'sofia@eventtracker.app', bio: 'Chef & supper-club host. Pasta is a personality trait.', location: 'Milan, IT', colors: ['#ff922b', '#ffd43b'] },
-  { name: 'Kwame Mensah', username: 'kwame', email: 'kwame@eventtracker.app', bio: 'Marathon runner, coach, and sunrise yoga evangelist.', location: 'Accra, GH', colors: ['#12b886', '#63e6be'] },
-  { name: 'Elena Petrova', username: 'elena', email: 'elena@eventtracker.app', bio: 'Gallery director. Contemporary art, strong coffee, longer conversations.', location: 'Berlin, DE', colors: ['#e64980', '#fcc2d7'] },
-  { name: 'James Carter', username: 'james', email: 'james@eventtracker.app', bio: 'Startup founder. Networking is my cardio.', location: 'San Francisco, US', colors: ['#3b5bdb', '#74c0fc'] },
-  { name: 'Zara Hassan', username: 'zara', email: 'zara@eventtracker.app', bio: 'Mindfulness teacher & sound-healing facilitator. Breathe in, glow out.', location: 'Dubai, AE', colors: ['#9c36b5', '#e599f7'] },
-];
-const passwordHash = bcrypt.hashSync('password123', 10);
-const userId = {};
-{
-  const insert = db.prepare('INSERT INTO users (name, username, email, password_hash, bio, location, avatar_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-  people.forEach((p, i) => {
-    const initials = p.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
-    const file = `avatar-${p.username}.svg`;
-    fs.writeFileSync(path.join(AVATARS, file), avatarSVG(p.colors, initials));
-    const joined = new Date(Date.now() - (120 + i * 47) * 86400000).toISOString().slice(0, 19).replace('T', ' ');
-    const info = insert.run(p.name, p.username, p.email, passwordHash, p.bio, p.location, `/uploads/avatars/${file}`, joined);
-    userId[p.username] = info.lastInsertRowid;
-  });
-}
-console.log(`✔ ${people.length} users   (demo password: password123)`);
-
-/* ------------------------------------------------------------------ */
-/* Events                                                              */
-/* ------------------------------------------------------------------ */
-function at(dayOffset, hour, minute = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() + dayOffset);
-  d.setHours(hour, minute, 0, 0);
-  return d.toISOString().slice(0, 19).replace('T', ' ');
+function writeCover(file, svg) {
+  fs.writeFileSync(path.join(COVERS, file), svg);
+  return `/uploads/covers/${file}`;
 }
 
-const events = [
-  {
-    title: 'Neon Nights: Open-Air Electronic Festival', tagline: 'Three stages under the stars',
-    host: 'daniel', category: 'music', featured: 1, price: 45, capacity: 2000, city: 'London', country: 'UK',
-    venue: 'Victoria Park', starts: at(5, 16), ends: at(6, 2), tags: 'festival,electronic,dj,open-air',
-    description: 'Neon Nights returns for its fifth year with three stages, twenty DJs and a laser installation that turns the park into a living canvas. Expect deep house at sunset, techno after midnight, and a food village that stays open until the last beat.\n\nBring a jacket, comfortable shoes, and your best people. VIP tickets include a raised viewing deck and a private bar.',
-  },
-  {
-    title: 'AI Builders Hackathon — Agents Edition', tagline: '48 hours. One prompt. Infinite agents.',
-    host: 'mei', category: 'tech', featured: 1, price: 0, capacity: 240, city: 'Singapore', country: 'SG',
-    venue: 'Launchpad Marina', starts: at(3, 9), ends: at(4, 18), tags: 'hackathon,ai,agents,builders',
-    description: 'A weekend-long build sprint for engineers, designers and founders working on agentic products. Teams of up to five, mentorship from labs engineers, and a demo night with $25k in credits and prizes.\n\nMeals, coffee and questionable amounts of snacks provided. Bring a laptop and one wild idea.',
-  },
-  {
-    title: 'Sunrise Run & Rooftop Yoga', tagline: '5K with a view',
-    host: 'kwame', category: 'sports', featured: 0, price: 10, capacity: 80, city: 'Accra', country: 'GH',
-    venue: 'Osu Waterfront', starts: at(2, 6), ends: at(2, 8), tags: 'running,yoga,sunrise,wellness',
-    description: 'Start the weekend with a gentle 5K along the waterfront, followed by a 45-minute rooftop yoga flow as the sun comes up. All paces welcome — we run together and finish together.\n\nYour ticket includes a cold-press juice and a mat if you need one.',
-  },
-  {
-    title: 'Anatomy of Taste: Seven-Course Supper Club', tagline: 'A dinner told in chapters',
-    host: 'sofia', category: 'food', featured: 1, price: 85, capacity: 32, city: 'Milan', country: 'IT',
-    venue: 'Casa Verde', starts: at(7, 19, 30), ends: at(7, 23), tags: 'supper-club,tasting,chefs-table',
-    description: 'An intimate seven-course tasting menu exploring the tension between memory and invention. Each course arrives with a short story and a paired natural wine.\n\nSeats are limited to 32 guests at one shared table. Dietary requirements can be accommodated with 72 hours notice.',
-  },
-  {
-    title: 'Modern Voices: Contemporary Art After Dark', tagline: 'The gallery stays open late',
-    host: 'elena', category: 'arts', featured: 1, price: 18, capacity: 300, city: 'Berlin', country: 'DE',
-    venue: 'Halle Neue Meister', starts: at(9, 18), ends: at(9, 23), tags: 'art,gallery,exhibition,live-music',
-    description: 'A late-night opening for our autumn exhibition featuring twelve emerging artists working at the edge of sculpture, light and sound. Live ambient sets, an artist talk at 20:30, and a bar that takes its negronis as seriously as its art.\n\nTicket includes exhibition entry all month.',
-  },
-  {
-    title: 'Founders & Friends: Rooftop Networking Mixer', tagline: 'Raise a glass, not a pitch deck',
-    host: 'james', category: 'business', featured: 0, price: 15, capacity: 150, city: 'San Francisco', country: 'US',
-    venue: 'Skyline Loft', starts: at(4, 18), ends: at(4, 21), tags: 'networking,startups,founders',
-    description: 'The friendliest room in the city for founders, operators and investors. No keynotes, no badges — just great conversations, a skyline view, and an intro wall that actually works.\n\nFirst drink on us. Come alone, leave with three new collaborators.',
-  },
-  {
-    title: 'Sound Bath & Breathwork Journey', tagline: 'Ninety minutes of deep rest',
-    host: 'zara', category: 'wellness', featured: 0, price: 25, capacity: 60, city: 'Dubai', country: 'AE',
-    venue: 'The Glow Studio', starts: at(6, 19), ends: at(6, 20, 30), tags: 'sound-bath,breathwork,mindfulness',
-    description: 'Lie down, tune out, and let a symphony of crystal bowls and chimes reset your nervous system. The session opens with twenty minutes of guided breathwork and closes with warm tea and quiet conversation.\n\nWear something comfortable. Mats, bolsters and blankets are provided.',
-  },
-  {
-    title: 'Community Mural Day', tagline: 'Paint the block together',
-    host: 'amara', category: 'community', featured: 0, price: 0, capacity: 120, city: 'Nairobi', country: 'KE',
-    venue: 'Riverbank Community Centre', starts: at(11, 10), ends: at(11, 16), tags: 'volunteer,mural,art,community',
-    description: 'Join local artists and neighbours to paint a 30-metre mural celebrating the neighbourhood’s history. No experience needed — there is a job for every pair of hands, from sketching to filling to lunch duty.\n\nPaint, brushes, gloves and lunch provided. Wear clothes you do not love.',
-  },
-  {
-    title: 'Jazz Under the Trees', tagline: 'An evening of standards and originals',
-    host: 'daniel', category: 'music', featured: 0, price: 22, capacity: 180, city: 'London', country: 'UK',
-    venue: 'Hampstead Bandstand', starts: at(13, 19), ends: at(13, 22), tags: 'jazz,live,acoustic',
-    description: 'A quartet, a bandstand, and the best acoustic natural reverb in the city. The set moves from Coltrane standards to originals written this summer — bring a blanket and settle in as the light fades.\n\nHot chocolate and mulled cider at the kiosk.',
-  },
-  {
-    title: 'Designing for Trust: Product Salon', tagline: 'Small room, big questions',
-    host: 'mei', category: 'tech', featured: 0, price: 12, capacity: 60, city: 'Singapore', country: 'SG',
-    venue: 'Studio 88', starts: at(8, 18, 30), ends: at(8, 21), tags: 'design,product,salon',
-    description: 'An off-record salon for product designers and engineers working on trust, safety and AI interfaces. Short talks, longer discussions, Chatham House rules.\n\nApply to attend — we keep the room small on purpose.',
-  },
-  {
-    title: 'Natural Wine & Vinyl Night', tagline: 'Low-intervention pours, high-fidelity grooves',
-    host: 'sofia', category: 'food', featured: 0, price: 30, capacity: 70, city: 'Milan', country: 'IT',
-    venue: 'Enoteca Solare', starts: at(10, 20), ends: at(10, 23, 30), tags: 'wine,music,vinyl',
-    description: 'Five natural wines, five records, one very good room. Each pour is introduced by the winemaker (on record, she is in Paris), and guests are invited to bring their own vinyl for the final hour.\n\nTicket includes all five tastings and a cheese board.',
-  },
-  {
-    title: 'Women in Leadership Summit', tagline: 'Strategy, courage, and the next chapter',
-    host: 'james', category: 'business', featured: 1, price: 120, capacity: 400, city: 'San Francisco', country: 'US',
-    venue: 'Moscone West', starts: at(16, 9), ends: at(16, 17), tags: 'leadership,conference,networking',
-    description: 'A one-day summit for women shaping the future of technology, finance and public life. Keynotes, tactical workshops, and structured networking that respects your time.\n\nIncludes lunch, a coaching circle signup, and the after-hours reception.',
-  },
-  {
-    title: 'Poetry & Espresso: Open Mic', tagline: 'Three minutes, one microphone',
-    host: 'elena', category: 'arts', featured: 0, price: 5, capacity: 50, city: 'Berlin', country: 'DE',
-    venue: 'Café Lumen', starts: at(12, 19), ends: at(12, 22), tags: 'poetry,open-mic,literature',
-    description: 'A warm, unhurried open mic for poets, storytellers and first-timers. Sign up on the night for a three-minute slot, or just come to listen — the room is famously kind.\n\nEspresso and cake included with entry.',
-  },
-  {
-    title: 'Coastal Half-Marathon Watch Party', tagline: 'Cheer loud, brunch after',
-    host: 'kwame', category: 'sports', featured: 0, price: 0, capacity: 100, city: 'Accra', country: 'GH',
-    venue: 'Labadi Beach Hotel', starts: at(15, 7), ends: at(15, 12), tags: 'running,watch-party,brunch',
-    description: 'We take over the best cheer point on the course with drums, signs and cold towels for every runner who passes. Afterwards: a long table brunch with fresh fruit and too many photos.\n\nFree to attend — register so we know how many chairs to steal.',
-  },
-  {
-    title: 'Full Moon Sound Journey', tagline: 'Gongs, flutes and ocean air',
-    host: 'zara', category: 'wellness', featured: 0, price: 20, capacity: 80, city: 'Dubai', country: 'AE',
-    venue: 'Desert Rose Camp', starts: at(18, 20), ends: at(18, 22), tags: 'sound-healing,full-moon,meditation',
-    description: 'A monthly ritual: a slow walk into the dunes, a circle around the fire, and ninety minutes of immersive sound as the moon rises. Perfect for anyone who needs to be reminded how quiet the world can be.\n\nTransport from the city is available as an add-on.',
-  },
-  {
-    title: 'Neighbourhood Harvest Market', tagline: 'Growers, makers, and one excellent pie stall',
-    host: 'amara', category: 'community', featured: 0, price: 0, capacity: 500, city: 'Nairobi', country: 'KE',
-    venue: 'Karura Grounds', starts: at(17, 9), ends: at(17, 15), tags: 'market,food,local,family',
-    description: 'Our seasonal market brings together forty local growers, bakers and makers. Live acoustic music all day, a kids’ craft corner, and a pie competition judged by whoever shows up first.\n\nFree entry. Bring cash and a tote bag.',
-  },
-  {
-    title: 'Synth Lab: Modular Workshop', tagline: 'Patch cables encouraged',
-    host: 'daniel', category: 'music', featured: 0, price: 35, capacity: 40, city: 'London', country: 'UK',
-    venue: 'Dalston Sound Rooms', starts: at(20, 18), ends: at(20, 21), tags: 'synths,workshop,electronic',
-    description: 'A hands-on introduction to modular synthesis. We start with the physics of oscillators and end with everyone patching a generative sequence on a wall-sized system. No experience necessary.\n\nIncludes a printed patch-book to take home.',
-  },
-  {
-    title: 'Frontend Futures Meetup', tagline: 'The web platform is the product',
-    host: 'mei', category: 'tech', featured: 0, price: 0, capacity: 120, city: 'Singapore', country: 'SG',
-    venue: 'Pixel Tower, Level 12', starts: at(22, 19), ends: at(22, 21, 30), tags: 'frontend,web,meetup',
-    description: 'Three talks on the state of the web platform: view transitions, local-first architectures, and design systems that survive contact with reality. Pizza and hallway track included.\n\nTalks are recorded (speakers opt in) and shared with attendees.',
-  },
-  {
-    title: 'Midnight Kitchen: Late-Night Dumpling Party', tagline: 'Fold, steam, feast',
-    host: 'sofia', category: 'food', featured: 0, price: 28, capacity: 45, city: 'Milan', country: 'IT',
-    venue: 'Casa Verde', starts: at(24, 21), ends: at(24, 23, 59), tags: 'dumplings,workshop,late-night',
-    description: 'A hands-on dumpling workshop for night owls. Learn three folds, master a ginger-scallion filling, and eat everything you make with a glass of something cold and sparkling.\n\nVegetarian and vegan fillings available.',
-  },
-  {
-    title: 'Screening: Restored Classics — 35mm Night', tagline: 'Grain, glow, and no subtitles',
-    host: 'elena', category: 'arts', featured: 0, price: 14, capacity: 200, city: 'Berlin', country: 'DE',
-    venue: 'Kino Babylon', starts: at(26, 20), ends: at(26, 23), tags: 'film,cinema,35mm',
-    description: 'A double bill of newly restored 35mm prints, introduced by a film historian and followed by a foyer discussion. The bar stays open between films; the popcorn is made the old-fashioned way.\n\nSeating is unallocated — arrive early for the best view.',
-  },
+function writeAvatar(file, svg) {
+  fs.writeFileSync(path.join(AVATARS, file), svg);
+  return `/uploads/avatars/${file}`;
+}
+
+/* ------------------------------------------------------------------ *
+ * Categories
+ * ------------------------------------------------------------------ */
+
+const CATEGORIES = [
+  { name: 'Music', slug: 'music', icon: 'music', color: '#1c1c20', gradient: 'linear-gradient(135deg,#1c1c20,#3a3a41)', description: 'Live bands, DJ sets, listening rooms and festivals.' },
+  { name: 'Technology', slug: 'technology', icon: 'cpu', color: '#2f2f35', gradient: 'linear-gradient(135deg,#2f2f35,#4d4d55)', description: 'Meetups, hackathons, workshops and product launches.' },
+  { name: 'Sports', slug: 'sports', icon: 'activity', color: '#43434b', gradient: 'linear-gradient(135deg,#43434b,#616169)', description: 'Runs, rides, tournaments and training sessions.' },
+  { name: 'Business', slug: 'business', icon: 'briefcase', color: '#54545c', gradient: 'linear-gradient(135deg,#54545c,#6e6e76)', description: 'Founder meetups, pitch nights and finance clinics.' },
+  { name: 'Food', slug: 'food', icon: 'utensils', color: '#232328', gradient: 'linear-gradient(135deg,#232328,#414149)', description: 'Supper clubs, markets, tastings and cooking classes.' },
+  { name: 'Arts', slug: 'arts', icon: 'palette', color: '#3a3a41', gradient: 'linear-gradient(135deg,#3a3a41,#55555d)', description: 'Exhibitions, theatre, film and spoken word.' },
+  { name: 'Community', slug: 'community', icon: 'users', color: '#2a2a30', gradient: 'linear-gradient(135deg,#2a2a30,#4a4a52)', description: 'Clean-ups, volunteer days, camps and neighbourhood meetups.' },
+  { name: 'Wellness', slug: 'wellness', icon: 'heart', color: '#4d4d55', gradient: 'linear-gradient(135deg,#4d4d55,#6a6a72)', description: 'Yoga, breathwork, sound baths and retreats.' },
 ];
 
-const eventIds = [];
+const CATEGORY_COVERS = {
+  music: { from: '#141416', to: '#2c2c31', motif: 'waves' },
+  technology: { from: '#101012', to: '#242428', motif: 'grid' },
+  sports: { from: '#17171a', to: '#313137', motif: 'arcs' },
+  business: { from: '#121214', to: '#27272c', motif: 'steps' },
+  food: { from: '#1a1a1d', to: '#333339', motif: 'rings' },
+  arts: { from: '#151517', to: '#2e2e33', motif: 'rings' },
+  community: { from: '#131315', to: '#292a2e', motif: 'waves' },
+  wellness: { from: '#18181b', to: '#34343a', motif: 'arcs' },
+};
+
 {
   const insert = db.prepare(`
-    INSERT INTO events (title, tagline, description, category_id, host_id, venue, city, country,
-                        starts_at, ends_at, price_cents, currency, capacity, image_url, tags, is_featured)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'USD', ?, ?, ?, ?)
+    INSERT INTO categories (name, slug, description, icon, color, gradient) VALUES (?, ?, ?, ?, ?, ?)
   `);
-  events.forEach((e, i) => {
-    const cat = categories.find((c) => c.slug === e.category);
-    const file = `cover-${i + 1}-${e.category}.svg`;
-    fs.writeFileSync(path.join(COVERS, file), coverSVG(cat.colors, cat.name));
-    const info = insert.run(
-      e.title, e.tagline, e.description, catId[e.category], userId[e.host],
-      e.venue, e.city, e.country, e.starts, e.ends, Math.round(e.price * 100),
-      e.capacity, `/uploads/covers/${file}`, e.tags, e.featured
-    );
-    eventIds.push(info.lastInsertRowid);
-  });
+  for (const c of CATEGORIES) insert.run(c.name, c.slug, c.description, c.icon, c.color, c.gradient);
 }
-console.log(`✔ ${events.length} events`);
+const categoryId = Object.fromEntries(
+  db.prepare('SELECT id, slug FROM categories').all().map((r) => [r.slug, r.id])
+);
+console.log(`· ${CATEGORIES.length} categories`);
 
-/* ------------------------------------------------------------------ */
-/* Social graph & engagement                                           */
-/* ------------------------------------------------------------------ */
-const follows = [
-  ['amara', 'daniel'], ['amara', 'mei'], ['amara', 'sofia'], ['amara', 'kwame'],
-  ['daniel', 'amara'], ['daniel', 'elena'], ['mei', 'amara'], ['mei', 'james'],
-  ['sofia', 'amara'], ['sofia', 'elena'], ['kwame', 'amara'], ['kwame', 'zara'],
-  ['elena', 'sofia'], ['elena', 'daniel'], ['james', 'mei'], ['james', 'amara'],
-  ['zara', 'kwame'], ['zara', 'amara'],
+/* ------------------------------------------------------------------ *
+ * Users
+ * ------------------------------------------------------------------ */
+
+const PASSWORD = 'password123';
+const passwordHash = bcrypt.hashSync(PASSWORD, 10);
+
+const USERS = [
+  { key: 'admin', name: 'Amina Wanjiru', username: 'amina', email: 'admin@eventtracker.app', role: 'admin', location: 'Nairobi, Kenya', bio: 'Platform operations at EventTracker. Here to help organisers ship great events.', interests: 'technology,business,community' },
+  { key: 'daniel', name: 'Daniel Mwangi', username: 'daniel', email: 'daniel@eventtracker.app', role: 'organizer', location: 'Nairobi, Kenya', bio: 'Promoter and sound engineer. 60+ shows across Nairobi since 2016.', interests: 'music,arts' },
+  { key: 'zawadi', name: 'Zawadi Achieng', username: 'zawadi', email: 'zawadi@eventtracker.app', role: 'organizer', location: 'Kisumu, Kenya', bio: 'Community organiser. Markets, clean-ups and lakefront art walks.', interests: 'community,arts,food' },
+  { key: 'kamau', name: 'Peter Kamau', username: 'kamau', email: 'kamau@eventtracker.app', role: 'organizer', location: 'Nairobi, Kenya', bio: 'Race director. Weekend runs and trail rides around the Rift.', interests: 'sports,wellness' },
+  { key: 'fatuma', name: 'Fatuma Hassan', username: 'fatuma', email: 'fatuma@eventtracker.app', role: 'organizer', location: 'Mombasa, Kenya', bio: 'Chef and coastal food curator. Swahili suppers, spice markets.', interests: 'food,community' },
+  { key: 'njeri', name: 'Njeri Karanja', username: 'njeri', email: 'njeri@eventtracker.app', role: 'user', location: 'Nairobi, Kenya', bio: 'Product designer. Rarely misses a workshop or a gallery opening.', interests: 'technology,arts' },
+  { key: 'brian', name: 'Brian Otieno', username: 'brian', email: 'brian@eventtracker.app', role: 'user', location: 'Nairobi, Kenya', bio: 'Backend engineer. Runs at 6am, ships at 9.', interests: 'technology,sports' },
+  { key: 'wanjiku', name: 'Grace Wanjiku', username: 'wanjiku', email: 'wanjiku@eventtracker.app', role: 'user', location: 'Nakuru, Kenya', bio: 'Yoga teacher in training and full-time coffee person.', interests: 'wellness,food' },
+  { key: 'omar', name: 'Omar Yusuf', username: 'omar', email: 'omar@eventtracker.app', role: 'user', location: 'Mombasa, Kenya', bio: 'Photographer. Usually at the coast, occasionally on a matatu upcountry.', interests: 'arts,community' },
+  { key: 'lucia', name: 'Lucia Mwende', username: 'lucia', email: 'lucia@eventtracker.app', role: 'organizer', location: 'Nairobi, Kenya', bio: 'Founder community lead. Breakfasts, pitch nights and finance clinics.', interests: 'business,technology' },
 ];
+
+const AVATAR_COLORS = ['#2f2f35', '#43434b', '#54545c', '#38383e', '#4d4d55', '#2a2a30', '#1c1c20', '#3a3a41', '#616169', '#232328'];
+const userId = {};
+
+USERS.forEach((u, index) => {
+  const initials = u.name.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+  const avatarUrl = writeAvatar(`${u.username}.svg`, avatarSVG(initials, AVATAR_COLORS[index % AVATAR_COLORS.length]));
+
+  const info = db.prepare(`
+    INSERT INTO users (name, username, email, password_hash, bio, location, phone, avatar_url, role, interests)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    u.name, u.username, u.email, passwordHash, u.bio, u.location,
+    `+2547${String(10000000 + index * 111111).slice(0, 8)}`,
+    avatarUrl, u.role, u.interests
+  );
+  userId[u.key] = info.lastInsertRowid;
+});
+console.log(`· ${USERS.length} users`);
+
+/* ------------------------------------------------------------------ *
+ * Events
+ * ------------------------------------------------------------------ */
+
+const EVENTS = [
+  {
+    title: 'Jazz at the Arboretum',
+    tagline: 'An evening of live jazz under the fig trees',
+    category: 'music', host: 'daniel', days: 6, hour: 18, durationHours: 4,
+    venue: 'Nairobi Arboretum, Main Lawn', city: 'Nairobi', country: 'Kenya',
+    description: 'Five bands, one lawn, and the best sunset in Nairobi. Bring a blanket and arrive early — the main stage fills up quickly. Food and drinks are available on site, and the acoustic tent opens at 17:30 for anyone who prefers to sit close to the strings.\n\nGates close at 21:00. Under-16s are welcome with a guardian.',
+    tags: 'jazz,live music,outdoors',
+    capacity: 1200,
+    tiers: [
+      { name: 'Early bird', price: 150000, quantity: 300, limit: 4, description: 'Sold out on the previous edition in three days.' },
+      { name: 'Standard entry', price: 250000, quantity: 700, limit: 8 },
+      { name: 'Lawn table (4 guests)', price: 1200000, quantity: 50, limit: 2, description: 'Reserved table, four chairs and a welcome platter.' },
+    ],
+  },
+  {
+    title: 'Founders Breakfast #12',
+    tagline: 'Small-room conversations with people building in Nairobi',
+    category: 'business', host: 'lucia', days: 3, hour: 7, durationHours: 3,
+    venue: 'The Alchemist, Westlands', city: 'Nairobi', country: 'Kenya',
+    description: 'Twelve founders, one long table, no slides. Each breakfast has a single question we work through together, then open discussion over coffee.\n\nThis month: "What did you get badly wrong in your first year — and what fixed it?"',
+    tags: 'startups,networking,breakfast',
+    capacity: 60,
+    tiers: [
+      { name: 'General seat', price: 0, quantity: 40, limit: 2 },
+      { name: 'Table host (includes breakfast)', price: 250000, quantity: 12, limit: 1, description: 'Host a table of six and help steer the conversation.' },
+    ],
+  },
+  {
+    title: 'Rift Valley Trail Ride',
+    tagline: '42 km of gravel above the escarpment',
+    category: 'sports', host: 'kamau', days: 12, hour: 6, durationHours: 7,
+    venue: 'Naivasha Country Club (start)', city: 'Naivasha', country: 'Kenya',
+    description: 'A supported 42 km ride on gravel and farm roads, with two water points, a mechanic van and a sag wagon. Two distances: 42 km for the full loop or 22 km for the gentle version.\n\nHelmets are compulsory. Bikes can be hired on site if you register at least three days ahead.',
+    tags: 'cycling,gravel,outdoors',
+    capacity: 300,
+    tiers: [
+      { name: '22 km entry', price: 180000, quantity: 120, limit: 4 },
+      { name: '42 km entry', price: 280000, quantity: 150, limit: 4 },
+      { name: 'Team of four (42 km)', price: 980000, quantity: 20, limit: 1 },
+    ],
+  },
+  {
+    title: 'Street Food Night Market',
+    tagline: 'Thirty vendors, one car park, every Friday',
+    category: 'food', host: 'zawadi', days: 1, hour: 17, durationHours: 5,
+    venue: 'Kenyatta Avenue Car Park', city: 'Nairobi', country: 'Kenya',
+    description: 'Smokies, mishkaki, biryani, mandazi and a rotating list of guest kitchens. Live DJ from 19:00, seating for 400, and a kids corner with two minders.\n\nEntry is free — pay the vendors directly. Bring cash or your mobile wallet.',
+    tags: 'street food,market,family',
+    capacity: 2000,
+    tiers: [{ name: 'Free entry', price: 0, quantity: 2000, limit: 10 }],
+  },
+  {
+    title: 'Kisumu Lakeside Art Walk',
+    tagline: 'Twelve studios open along the lakefront',
+    category: 'arts', host: 'zawadi', days: 9, hour: 10, durationHours: 8,
+    venue: 'Dunga Beach & Lakefront Studios', city: 'Kisumu', country: 'Kenya',
+    description: 'A self-guided walk between twelve working studios, with three guided departures from Dunga Beach at 10:00, 12:30 and 15:00. Painters, ceramicists, photographers and one very loud printmaker.\n\nTickets include a printed map and a boat ride back across the bay.',
+    tags: 'art,walk,lakefront',
+    capacity: 400,
+    tiers: [
+      { name: 'Standard', price: 80000, quantity: 300, limit: 6 },
+      { name: 'Guided walk + boat', price: 150000, quantity: 100, limit: 4 },
+    ],
+  },
+  {
+    title: 'Yoga at Sunrise: Karura Forest',
+    tagline: 'Sixty minutes of slow movement before the city wakes',
+    category: 'wellness', host: 'wanjiku', days: 4, hour: 6, durationHours: 2,
+    venue: 'Karura Forest, River Café Deck', city: 'Nairobi', country: 'Kenya',
+    description: 'A gentle vinyasa practice on the deck, followed by tea and fruit. Mats are provided but feel free to bring your own. All levels welcome — the first twenty minutes stay close to the ground.\n\nWe finish by 07:30 so you can beat the traffic.',
+    tags: 'yoga,wellness,sunrise',
+    capacity: 80,
+    tiers: [
+      { name: 'Mat included', price: 120000, quantity: 60, limit: 3 },
+      { name: 'Bring your own mat', price: 80000, quantity: 20, limit: 3 },
+    ],
+  },
+  {
+    title: 'Pitch Night: Cohort 7',
+    tagline: 'Eight teams, five minutes each, one honest audience',
+    category: 'business', host: 'lucia', days: 8, hour: 17, durationHours: 4,
+    venue: 'iHub, Senteu Plaza', city: 'Nairobi', country: 'Kenya',
+    description: 'The closing night of our seventh incubation cohort. Eight teams pitch to investors, operators and anyone curious about what is being built in Nairobi right now.\n\nDoors 17:00, pitches 18:00, networking until late. Drinks and snacks included.',
+    tags: 'pitch,investors,startups',
+    capacity: 350,
+    tiers: [
+      { name: 'Community (free)', price: 0, quantity: 250, limit: 4 },
+      { name: 'Front row + investor mixer', price: 200000, quantity: 60, limit: 2 },
+    ],
+  },
+  {
+    title: 'Design Systems Workshop',
+    tagline: 'A full day building a component library that survives contact with product',
+    category: 'technology', host: 'njeri', days: 16, hour: 9, durationHours: 9,
+    venue: 'Moringa School, Ngong Road', city: 'Nairobi', country: 'Kenya',
+    description: 'Hands-on, laptop required. We cover tokens, layout primitives, accessible components, documentation and the governance question nobody enjoys: who owns the library?\n\nYou leave with a working starter repository and a written migration plan for your own product.',
+    tags: 'design,engineering,workshop',
+    capacity: 40,
+    tiers: [
+      { name: 'Individual', price: 650000, quantity: 25, limit: 2 },
+      { name: 'Team pass (3 seats)', price: 1650000, quantity: 5, limit: 1, description: 'Three seats plus a 45-minute team review after the workshop.' },
+    ],
+  },
+  {
+    title: 'Swahili Coastal Supper',
+    tagline: 'A seven-course tasting menu from Lamu to Zanzibar',
+    category: 'food', host: 'fatuma', days: 11, hour: 19, durationHours: 3,
+    venue: 'Forodhani Courtyard', city: 'Mombasa', country: 'Kenya',
+    description: 'One long table in a courtyard off the old town. Seven courses tracing the coastal trade routes — coconut, tamarind, cardamom, grilled fish and a dessert you will think about for weeks.\n\nTwenty-eight seats only. Tell us about allergies when you book.',
+    tags: 'supper club,tasting menu,coastal',
+    capacity: 28,
+    tiers: [
+      { name: 'Dinner seat', price: 750000, quantity: 22, limit: 2 },
+      { name: 'Dinner + wine pairing', price: 1050000, quantity: 6, limit: 2 },
+    ],
+  },
+  {
+    title: 'Mombasa Beach Clean-Up',
+    tagline: 'Two hours of work, one very good sundowner',
+    category: 'community', host: 'fatuma', days: 5, hour: 15, durationHours: 5,
+    venue: 'Pirates Beach, Bamburi', city: 'Mombasa', country: 'Kenya',
+    description: 'Gloves, bags and grabbers provided — we just need hands. We clear roughly 400 m of shoreline, weigh what we collect and log it with the county team.\n\nStick around afterwards: there is a sundowner and a short talk from the marine conservation unit.',
+    tags: 'volunteer,beach,environment',
+    capacity: 250,
+    tiers: [{ name: 'Free registration', price: 0, quantity: 250, limit: 6 }],
+  },
+  {
+    title: 'Blankets & Wine: Karura Sessions',
+    tagline: 'The long-running Sunday picnic concert',
+    category: 'music', host: 'daniel', days: 20, hour: 13, durationHours: 7,
+    venue: 'Karura Forest, Main Field', city: 'Nairobi', country: 'Kenya',
+    description: 'Four acts across two stages, food trucks around the perimeter and a strictly enforced "no rushing" policy. Bring a blanket, a hat and your people.\n\nChildren under 12 enter free. Re-entry is allowed with your wristband.',
+    tags: 'festival,picnic,live music',
+    capacity: 3000,
+    tiers: [
+      { name: 'Early bird', price: 280000, quantity: 600, limit: 6 },
+      { name: 'Advance', price: 350000, quantity: 1800, limit: 8 },
+      { name: 'Gate', price: 450000, quantity: 600, limit: 8 },
+    ],
+  },
+  {
+    title: 'Nakuru Rift Half Marathon',
+    tagline: '21 km, 10 km and a 5 km family loop',
+    category: 'sports', host: 'kamau', days: 26, hour: 6, durationHours: 6,
+    venue: 'Nakuru Athletic Club', city: 'Nakuru', country: 'Kenya',
+    description: 'A fast, flat course starting at the athletic club and looping around the lake basin. Chip timing, four water points, physio at the finish and a very serious breakfast.\n\nRace pack collection opens the day before at the club pavilion.',
+    tags: 'running,marathon,family',
+    capacity: 2500,
+    tiers: [
+      { name: '5 km fun run', price: 120000, quantity: 800, limit: 6 },
+      { name: '10 km', price: 180000, quantity: 900, limit: 4 },
+      { name: 'Half marathon', price: 250000, quantity: 800, limit: 4 },
+    ],
+  },
+  {
+    title: 'Breathwork & Sound Bath',
+    tagline: 'Ninety minutes of guided breath and deep rest',
+    category: 'wellness', host: 'wanjiku', days: 2, hour: 18, durationHours: 2,
+    venue: 'The Sanctuary, Kilimani', city: 'Nairobi', country: 'Kenya',
+    description: 'A short guided breath practice followed by a sound bath with singing bowls, gongs and a very large drum. You lie down for most of it — bring socks and a layer.\n\nNot suitable during pregnancy or with a history of seizure; message us and we will suggest an alternative session.',
+    tags: 'breathwork,sound bath,rest',
+    capacity: 45,
+    tiers: [{ name: 'Session ticket', price: 200000, quantity: 45, limit: 2 }],
+  },
+  {
+    title: 'SME Finance Clinic',
+    tagline: 'Bring your books, leave with a plan',
+    category: 'business', host: 'zawadi', days: 14, hour: 14, durationHours: 4,
+    venue: 'Lakeview Business Hub', city: 'Kisumu', country: 'Kenya',
+    description: 'Four advisors from a local SACCO, a bank and two accounting firms run twenty-minute clinics. Bring last year’s books, your loan question and your registration certificate.\n\nFree to attend, but slots are limited and confirmed by email.',
+    tags: 'finance,sme,clinic',
+    capacity: 120,
+    tiers: [{ name: 'Free clinic slot', price: 0, quantity: 120, limit: 2 }],
+  },
+  {
+    title: 'Short Films Night',
+    tagline: 'Nine Kenyan shorts, one jury, and you',
+    category: 'arts', host: 'omar', days: 7, hour: 18, durationHours: 4,
+    venue: 'Alliance Française, Auditorium', city: 'Nairobi', country: 'Kenya',
+    description: 'Nine short films from emerging Kenyan directors, followed by a Q&A and the audience award. Two programmes: the main slate at 18:30 and a late experimental set at 21:00.\n\nSubtitles in English and Kiswahili on every film.',
+    tags: 'film,cinema,shorts',
+    capacity: 300,
+    tiers: [
+      { name: 'Main slate', price: 100000, quantity: 220, limit: 4 },
+      { name: 'Full pass (both programmes)', price: 160000, quantity: 80, limit: 4 },
+    ],
+  },
+  {
+    title: 'Community Health Camp',
+    tagline: 'Free screenings, dental checks and maternal care',
+    category: 'community', host: 'amina', days: 17, hour: 8, durationHours: 8,
+    venue: 'Nakuru Community Grounds', city: 'Nakuru', country: 'Kenya',
+    description: 'A full day of free services: blood pressure and sugar checks, eye tests, dental screening for children, maternal health consultations and a pharmacy counter with basic medication.\n\nNo appointment needed. Registration is only used to plan the queue.',
+    tags: 'health,community,free',
+    capacity: 1500,
+    tiers: [{ name: 'Free registration', price: 0, quantity: 1500, limit: 10 }],
+  },
+  {
+    title: 'Nairobi Product Meetup',
+    tagline: 'Three case studies on shipping in constrained environments',
+    category: 'technology', host: 'njeri', days: 10, hour: 18, durationHours: 3,
+    venue: 'Senteu Plaza, 4th Floor', city: 'Nairobi', country: 'Kenya',
+    description: 'Three product teams walk through what they shipped, what broke and how they decided what to cut. No vendor pitches, no recruiting talks — just the work.\n\nRefreshments from 18:00, talks start at 18:30.',
+    tags: 'product,meetup,engineering',
+    capacity: 150,
+    tiers: [{ name: 'Free ticket', price: 0, quantity: 150, limit: 3 }],
+  },
+  {
+    title: 'Rooftop Sundowner Sessions',
+    tagline: 'Deep house, city lights and a very long sunset',
+    category: 'music', host: 'daniel', days: 22, hour: 17, durationHours: 6,
+    venue: 'Westlands Rooftop, 7th Floor', city: 'Nairobi', country: 'Kenya',
+    description: 'Three DJs, two bars and a rooftop looking west over the city. Capacity is deliberately small so there is always room to dance.\n\nStrictly 21+. Smart casual — no slippers after 20:00.',
+    tags: 'dj,house,rooftop',
+    capacity: 220,
+    tiers: [
+      { name: 'Advance', price: 150000, quantity: 180, limit: 4 },
+      { name: 'Table of four', price: 900000, quantity: 10, limit: 1 },
+    ],
+  },
+  // Past events — keep the platform from looking empty on day one.
+  {
+    title: 'Nairobi Coffee Expo',
+    tagline: 'Three days of roasters, cuppings and very good espresso',
+    category: 'food', host: 'fatuma', days: -18, hour: 9, durationHours: 8,
+    venue: 'Sarit Expo Centre', city: 'Nairobi', country: 'Kenya',
+    description: 'A weekend of Kenyan and East African roasters, cupping tables, latte art throwdowns and a serious filter bar. Thank you to everyone who came through.',
+    tags: 'coffee,expo,tasting',
+    capacity: 900,
+    tiers: [
+      { name: 'Day pass', price: 90000, quantity: 500, limit: 6 },
+      { name: 'Weekend pass', price: 150000, quantity: 400, limit: 4 },
+    ],
+  },
+  {
+    title: 'Lake Victoria Fish Festival',
+    tagline: 'Two days of lake fish, boats and a very competitive grill-off',
+    category: 'community', host: 'zawadi', days: -34, hour: 10, durationHours: 9,
+    venue: 'Dunga Beach', city: 'Kisumu', country: 'Kenya',
+    description: 'Fisherfolk, chefs and boat crews from across the lake. The grill-off final went to a tiebreak. See you next season.',
+    tags: 'festival,lake,food',
+    capacity: 1800,
+    tiers: [{ name: 'Entry', price: 50000, quantity: 1800, limit: 8 }],
+  },
+];
+
+function hostKeyFor(key) {
+  return userId[key] ? key : 'njeri';
+}
+
+const eventIds = [];
+
+EVENTS.forEach((event, index) => {
+  const slug = event.category;
+  const cover = CATEGORY_COVERS[slug] || CATEGORY_COVERS.music;
+  const variant = index % 3;
+  const from = variant === 0 ? cover.from : variant === 1 ? cover.to : cover.from;
+  const imageUrl = writeCover(
+    `event-${String(index + 1).padStart(2, '0')}-${slug}.svg`,
+    coverSVG({ from, to: cover.to, motif: cover.motif, label: CATEGORIES.find((c) => c.slug === slug)?.name })
+  );
+
+  const starts = at(event.days, event.hour);
+  const ends = new Date(starts.getTime() + (event.durationHours || 3) * 3600_000);
+  const minPrice = Math.min(...event.tiers.map((t) => t.price));
+
+  const info = db.prepare(`
+    INSERT INTO events (title, tagline, description, category_id, host_id, venue, city, country,
+                        starts_at, ends_at, price_cents, currency, capacity, image_url, video_url,
+                        tags, contact_email, contact_phone, status, is_featured, views, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'KES', ?, ?, '', ?, ?, ?, 'published', ?, ?, ?)
+  `).run(
+    event.title,
+    event.tagline,
+    event.description,
+    categoryId[slug],
+    userId[hostKeyFor(event.host)],
+    event.venue,
+    event.city,
+    event.country,
+    sqlTime(starts),
+    sqlTime(ends),
+    minPrice,
+    event.capacity,
+    imageUrl,
+    event.tags,
+    `events@${event.city.toLowerCase()}.ke`,
+    '+254 700 000 000',
+    index % 5 === 0 ? 1 : 0,
+    400 + index * 37,
+    sqlTime(new Date(Date.now() - (30 - index) * 86400_000))
+  );
+
+  const eventId = info.lastInsertRowid;
+  eventIds.push(eventId);
+
+  const insertTier = db.prepare(`
+    INSERT INTO ticket_types (event_id, name, description, price_cents, currency, quantity, sold, per_user_limit, sort_order)
+    VALUES (?, ?, ?, ?, 'KES', ?, 0, ?, ?)
+  `);
+
+  event.tiers.forEach((tier, tierIndex) => {
+    insertTier.run(
+      eventId, tier.name, tier.description || '', tier.price, tier.quantity,
+      tier.limit || 8, tierIndex
+    );
+  });
+});
+console.log(`· ${EVENTS.length} events with ticket tiers`);
+
+/* ------------------------------------------------------------------ *
+ * Social graph: follows, RSVPs, saves, event follows, comments
+ * ------------------------------------------------------------------ */
+
 {
   const insert = db.prepare('INSERT OR IGNORE INTO follows (follower_id, following_id) VALUES (?, ?)');
-  for (const [a, b] of follows) insert.run(userId[a], userId[b]);
+  const graph = [
+    ['njeri', 'daniel'], ['njeri', 'lucia'], ['njeri', 'zawadi'],
+    ['brian', 'lucia'], ['brian', 'daniel'], ['brian', 'njeri'],
+    ['wanjiku', 'kamau'], ['wanjiku', 'zawadi'],
+    ['omar', 'fatuma'], ['omar', 'zawadi'],
+    ['zawadi', 'fatuma'], ['fatuma', 'omar'],
+    ['lucia', 'njeri'], ['kamau', 'wanjiku'], ['daniel', 'zawadi'],
+    ['njeri', 'kamau'], ['wanjiku', 'fatuma'],
+  ];
+  for (const [a, b] of graph) insert.run(userId[a], userId[b]);
 }
 
-const rsvps = [
-  [0, 'daniel', 'going'], [0, 'mei', 'going'], [0, 'sofia', 'interested'], [0, 'elena', 'going'],
-  [0, 'james', 'going'], [0, 'zara', 'interested'], [0, 'kwame', 'going'],
-  [1, 'amara', 'going'], [1, 'james', 'going'], [1, 'sofia', 'going'], [1, 'kwame', 'interested'],
-  [2, 'amara', 'going'], [2, 'zara', 'going'], [2, 'elena', 'interested'],
-  [3, 'elena', 'going'], [3, 'daniel', 'going'], [3, 'amara', 'going'],
-  [4, 'sofia', 'going'], [4, 'amara', 'interested'], [4, 'daniel', 'going'], [4, 'mei', 'going'],
-  [5, 'mei', 'going'], [5, 'amara', 'going'],
-  [6, 'kwame', 'going'], [6, 'amara', 'going'], [6, 'sofia', 'interested'],
-  [7, 'elena', 'going'], [7, 'sofia', 'going'], [7, 'james', 'going'], [7, 'zara', 'going'],
-  [8, 'amara', 'going'], [8, 'sofia', 'going'], [8, 'elena', 'going'],
-  [9, 'daniel', 'interested'], [9, 'amara', 'going'],
-  [10, 'amara', 'going'], [10, 'elena', 'going'], [10, 'zara', 'going'],
-  [11, 'zara', 'going'], [11, 'elena', 'going'], [11, 'amara', 'going'], [11, 'mei', 'interested'],
-  [12, 'mei', 'going'], [12, 'amara', 'interested'],
-  [13, 'zara', 'going'], [13, 'kwame', 'going'],
-  [14, 'daniel', 'going'], [14, 'kwame', 'going'], [14, 'james', 'going'],
-  [15, 'sofia', 'going'], [15, 'amara', 'going'], [15, 'kwame', 'going'], [15, 'elena', 'interested'],
-  [16, 'mei', 'going'], [16, 'james', 'going'],
-  [17, 'amara', 'going'], [17, 'james', 'interested'],
-  [18, 'elena', 'going'], [18, 'sofia', 'going'], [18, 'daniel', 'going'],
-  [19, 'sofia', 'going'], [19, 'amara', 'going'], [19, 'zara', 'going'],
+const RSVPS = [
+  [0, 'njeri', 'going'], [0, 'brian', 'going'], [0, 'omar', 'interested'], [0, 'wanjiku', 'going'],
+  [1, 'njeri', 'going'], [1, 'brian', 'going'],
+  [2, 'wanjiku', 'going'], [2, 'brian', 'going'], [2, 'njeri', 'interested'],
+  [3, 'njeri', 'going'], [3, 'brian', 'going'], [3, 'omar', 'going'], [3, 'wanjiku', 'interested'],
+  [4, 'omar', 'going'], [4, 'njeri', 'interested'],
+  [5, 'wanjiku', 'going'], [5, 'njeri', 'going'],
+  [6, 'brian', 'going'], [6, 'njeri', 'going'],
+  [7, 'njeri', 'going'], [7, 'brian', 'interested'],
+  [8, 'omar', 'going'], [8, 'wanjiku', 'interested'],
+  [9, 'omar', 'going'], [9, 'njeri', 'going'],
+  [10, 'njeri', 'going'], [10, 'brian', 'going'], [10, 'wanjiku', 'going'], [10, 'omar', 'interested'],
+  [11, 'wanjiku', 'going'], [11, 'brian', 'going'],
+  [12, 'wanjiku', 'going'], [12, 'njeri', 'interested'],
+  [13, 'brian', 'going'], [13, 'njeri', 'going'],
+  [14, 'omar', 'going'], [14, 'njeri', 'going'],
+  [16, 'brian', 'going'], [16, 'njeri', 'going'],
+  [17, 'njeri', 'going'], [17, 'brian', 'going'],
 ];
+
 {
-  const insert = db.prepare("INSERT OR IGNORE INTO rsvps (event_id, user_id, status) VALUES (?, ?, ?)");
-  for (const [idx, who, status] of rsvps) insert.run(eventIds[idx], userId[who], status);
+  const insert = db.prepare('INSERT OR IGNORE INTO rsvps (event_id, user_id, status) VALUES (?, ?, ?)');
+  for (const [idx, who, status] of RSVPS) insert.run(eventIds[idx], userId[who], status);
 }
 
 {
   const insert = db.prepare('INSERT OR IGNORE INTO saves (event_id, user_id) VALUES (?, ?)');
-  insert.run(eventIds[0], userId.amara); insert.run(eventIds[4], userId.amara);
-  insert.run(eventIds[11], userId.zara); insert.run(eventIds[1], userId.james);
-  insert.run(eventIds[8], userId.mei); insert.run(eventIds[3], userId.elena);
+  const saved = [[0, 'njeri'], [2, 'brian'], [7, 'njeri'], [10, 'wanjiku'], [11, 'brian'], [14, 'nijeri'], [16, 'njeri']];
+  for (const [idx, who] of saved) {
+    if (userId[who]) insert.run(eventIds[idx], userId[who]);
+  }
 }
 
-const comments = [
-  [0, 'mei', 'The lineup is unreal. Who else is going for the sunrise set?'],
-  [0, 'elena', 'Went last year — the light installation alone is worth the ticket.'],
-  [0, 'kwame', 'Bringing the running crew. See you at stage two!'],
-  [1, 'amara', 'Signed up with my team. Are hardware hacks allowed this year?'],
-  [1, 'james', 'Mentoring on Saturday afternoon — come say hi.'],
-  [2, 'zara', 'Perfect way to start a Saturday. The rooftop view is magic.'],
-  [3, 'daniel', 'Best meal I had all year. The third course broke my brain.'],
-  [3, 'elena', 'Booked for two. Please tell me the wine pairing includes the orange one.'],
-  [4, 'amara', 'This exhibition is stunning — the sound room especially.'],
-  [4, 'sofia', 'Adding to my calendar. Meet at the bar after the artist talk?'],
-  [5, 'mei', 'The intro wall at the last one actually worked. Made two hires from it.'],
-  [7, 'elena', 'Volunteered last season — genuinely the best day of the year.'],
-  [7, 'sofia', 'Coming with my kitchen team. We will feed everyone.'],
-  [8, 'amara', 'The bandstand is such a good shout. Bringing blankets.'],
-  [11, 'zara', 'The coaching circles changed how I lead. Highly recommend.'],
-  [14, 'kwame', 'The full moon walk is worth it for the silence alone.'],
-  [15, 'amara', 'Pie competition judge here. I take this role seriously.'],
-  [18, 'mei', '35mm forever. The grain is the point!'],
+{
+  const insert = db.prepare('INSERT OR IGNORE INTO event_follows (event_id, user_id) VALUES (?, ?)');
+  const following = [
+    [0, 'njeri'], [0, 'brian'], [0, 'wanjiku'], [0, 'omar'],
+    [1, 'brian'], [1, 'njeri'],
+    [7, 'brian'], [7, 'njeri'], [7, 'lucia'],
+    [10, 'njeri'], [10, 'brian'], [10, 'wanjiku'], [10, 'omar'], [10, 'fatuma'],
+    [11, 'wanjiku'], [16, 'njeri'],
+  ];
+  for (const [idx, who] of following) insert.run(eventIds[idx], userId[who]);
+}
+
+const COMMENTS = [
+  [0, 'njeri', 'Went to the last one — the acoustic tent is the real highlight. Bring a blanket.'],
+  [0, 'brian', 'Is there parking at the main gate or should we use the KFE gate?'],
+  [0, 'omar', 'Shooting this one. Anyone up for a group photo at the second set?'],
+  [1, 'brian', 'The question this month is uncomfortably relevant. See you at 7.'],
+  [1, 'njeri', 'Coming for the first time — is it alright to arrive a little late?'],
+  [2, 'wanjiku', 'Signed up for the 22 km. Anyone want to share a lift from Nairobi?'],
+  [2, 'brian', 'In for the 42. Last year the gravel after the turn was brutal.'],
+  [3, 'njeri', 'Which vendors are back this week? The biryani stand sold out by 7.'],
+  [4, 'omar', 'The printmaker on the third studio is worth the whole walk.'],
+  [5, 'njeri', 'Perfect way to start the week. Is the deck sheltered if it rains?'],
+  [6, 'brian', 'Any chance the cohort pitches are recorded? I cannot make the 18:00 slot.'],
+  [7, 'brian', 'Please cover component governance — every team I have worked on gets this wrong.'],
+  [8, 'wanjiku', 'Booked the wine pairing. Tell me there is dessert before the dessert.'],
+  [9, 'njeri', 'Volunteering with my running club. We will be there by 14:30.'],
+  [10, 'njeri', 'Last year was the best Sunday of my year. Not missing this.'],
+  [11, 'brian', 'Is the 10 km course the same as last season? That hill at 7 km was something.'],
+  [14, 'omar', 'The audience award is the best part of the night. Submitting my vote early.'],
+  [16, 'brian', 'Great lineup this month — the cut discussion was genuinely useful.'],
 ];
+
 {
   const insert = db.prepare('INSERT INTO comments (event_id, user_id, body, created_at) VALUES (?, ?, ?, ?)');
-  comments.forEach(([idx, who, body], i) => {
-    const t = new Date(Date.now() - (i * 5 + 2) * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
-    insert.run(eventIds[idx], userId[who], body, t);
+  COMMENTS.forEach(([idx, who, body], i) => {
+    const when = new Date(Date.now() - (i * 7 + 4) * 3600_000);
+    insert.run(eventIds[idx], userId[who], body, sqlTime(when));
   });
 }
-console.log(`✔ follows, RSVPs, saves & comments`);
+console.log('· follows, RSVPs, saves and comments');
 
-/* ------------------------------------------------------------------ */
-/* Chat threads                                                        */
-/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ *
+ * Transactions, tickets, promotions
+ * ------------------------------------------------------------------ */
+
+/**
+ * Ticket issuing mirrors the live flow: a transaction is marked successful
+ * first, then the ticket service issues the tickets.
+ */
+function issueSeededTickets({ buyer, eventIdx, tierIdx, quantity, method, status, daysAgo, receipt, payerPhone = '' }) {
+  const eventId = eventIds[eventIdx];
+  const tiers = db.prepare('SELECT * FROM ticket_types WHERE event_id = ? ORDER BY sort_order').all(eventId);
+  const tier = tiers[tierIdx] || tiers[0];
+  if (!tier) return null;
+
+  const event = db.prepare('SELECT currency FROM events WHERE id = ?').get(eventId);
+
+  // The buyer pays the ticket subtotal plus the platform service fee, exactly
+  // as buildCart does in the live flow — so commission is a real ledger figure.
+  const subtotal = tier.price_cents * quantity;
+  const fee = method === 'free' ? 0 : Math.round(subtotal * (SERVICE_FEE_PERCENT / 100));
+  const amount = subtotal + fee;
+  const created = at(-daysAgo, 10, 30);
+  const reference = `ET-TIX-${String(Math.random().toString(36).slice(2, 7)).toUpperCase()}${daysAgo}`;
+
+  const info = db.prepare(`
+    INSERT INTO transactions (reference, user_id, event_id, purpose, amount_cents, fee_cents, currency, method, provider,
+                              provider_reference, status, payer_phone, receipt, metadata, completed_at, created_at, updated_at)
+    VALUES (?, ?, ?, 'ticket', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    reference,
+    userId[buyer],
+    eventId,
+    amount,
+    fee,
+    event?.currency || 'KES',
+    method,
+    method === 'mpesa' ? 'mpesa' : method === 'free' ? 'internal' : 'card',
+    method === 'mpesa' ? `ws_CO_${Date.now()}${String(Math.floor(Math.random() * 900) + 100)}` : `pi_seed_${Math.random().toString(36).slice(2, 10)}`,
+    status,
+    payerPhone,
+    receipt,
+    JSON.stringify({
+      items: [{ ticket_type_id: tier.id, quantity }],
+      attendees: [],
+      notes: `subtotal=${subtotal};fee=${fee}`,
+    }),
+    status === 'successful' ? sqlTime(created) : '',
+    sqlTime(created),
+    sqlTime(created)
+  );
+
+  if (status !== 'successful') return null;
+
+  const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get(info.lastInsertRowid);
+  const created2 = ticketService.issueForTransaction(txn);
+
+  // Backdate so the activity reads naturally.
+  for (const ticket of created2) {
+    db.prepare('UPDATE tickets SET issued_at = ? WHERE id = ?').run(sqlTime(created), ticket.id);
+  }
+  return created2;
+}
+
+const seededTickets = [];
+
+// Paid + free orders across upcoming events.
+seededTickets.push(...(issueSeededTickets({ buyer: 'njeri', eventIdx: 0, tierIdx: 1, quantity: 2, method: 'mpesa', status: 'successful', daysAgo: 9, receipt: 'SJI4MK9Q2L', payerPhone: '254712345678' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'brian', eventIdx: 0, tierIdx: 0, quantity: 1, method: 'mpesa', status: 'successful', daysAgo: 11, receipt: 'SJI3PL7X1B', payerPhone: '254722334455' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'wanjiku', eventIdx: 0, tierIdx: 2, quantity: 1, method: 'card', status: 'successful', daysAgo: 7, receipt: 'ch_3PqF2kDsw' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'njeri', eventIdx: 1, tierIdx: 1, quantity: 1, method: 'mpesa', status: 'successful', daysAgo: 4, receipt: 'SJI8QW2M4T', payerPhone: '254712345678' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'brian', eventIdx: 2, tierIdx: 1, quantity: 1, method: 'mpesa', status: 'successful', daysAgo: 6, receipt: 'SJI5RT8N7K', payerPhone: '254722334455' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'wanjiku', eventIdx: 2, tierIdx: 0, quantity: 2, method: 'mpesa', status: 'successful', daysAgo: 5, receipt: 'SJI6YU3P8D', payerPhone: '254733221100' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'njeri', eventIdx: 5, tierIdx: 0, quantity: 1, method: 'mpesa', status: 'successful', daysAgo: 2, receipt: 'SJI9AC5V2F', payerPhone: '254712345678' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'omar', eventIdx: 8, tierIdx: 1, quantity: 2, method: 'card', status: 'successful', daysAgo: 3, receipt: 'ch_3PrX8sKda' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'njeri', eventIdx: 7, tierIdx: 0, quantity: 1, method: 'card', status: 'successful', daysAgo: 1, receipt: 'ch_3PsQ1mHda' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'brian', eventIdx: 10, tierIdx: 1, quantity: 4, method: 'mpesa', status: 'successful', daysAgo: 8, receipt: 'SJI2ED6R9G', payerPhone: '254722334455' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'wanjiku', eventIdx: 11, tierIdx: 2, quantity: 1, method: 'mpesa', status: 'successful', daysAgo: 10, receipt: 'SJI7TF4B3H', payerPhone: '254733221100' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'njeri', eventIdx: 14, tierIdx: 0, quantity: 2, method: 'mpesa', status: 'successful', daysAgo: 4, receipt: 'SJI1GH9L5C', payerPhone: '254712345678' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'omar', eventIdx: 16, tierIdx: 0, quantity: 1, method: 'mpesa', status: 'successful', daysAgo: 6, receipt: 'SJI0JK2W7M', payerPhone: '254799887766' }) || []));
+
+// Free registrations — recorded in the ledger with a zero-value confirmation.
+function seedFreeRegistration(buyer, eventIdx, tierIdx, daysAgo) {
+  const eventId = eventIds[eventIdx];
+  const tiers = db.prepare('SELECT * FROM ticket_types WHERE event_id = ? ORDER BY sort_order').all(eventId);
+  const tier = tiers[tierIdx];
+  if (!tier) return [];
+  return issueSeededTickets({ buyer, eventIdx, tierIdx, quantity: 1, method: 'free', status: 'successful', daysAgo, receipt: `FREE-${Math.random().toString(36).slice(2, 8).toUpperCase()}` }) || [];
+}
+
+seededTickets.push(...seedFreeRegistration('brian', 1, 0, 5));
+seededTickets.push(...seedFreeRegistration('njeri', 6, 0, 3));
+seededTickets.push(...seedFreeRegistration('wanjiku', 9, 0, 4));
+seededTickets.push(...seedFreeRegistration('omar', 13, 0, 6));
+seededTickets.push(...seedFreeRegistration('brian', 3, 0, 2));
+seededTickets.push(...seedFreeRegistration('njeri', 3, 0, 1));
+
+// Past-event attendance, some already checked in.
+seededTickets.push(...(issueSeededTickets({ buyer: 'njeri', eventIdx: 18, tierIdx: 1, quantity: 2, method: 'mpesa', status: 'successful', daysAgo: 30, receipt: 'SHZ8KD3M2Q', payerPhone: '254712345678' }) || []));
+seededTickets.push(...(issueSeededTickets({ buyer: 'omar', eventIdx: 19, tierIdx: 0, quantity: 1, method: 'mpesa', status: 'successful', daysAgo: 40, receipt: 'SHX4LM7P1R', payerPhone: '254799887766' }) || []));
+
+// A few tickets checked in at the gate during past events.
+for (const ticket of seededTickets.slice(-3)) {
+  db.prepare("UPDATE tickets SET status = 'used', checked_in_at = datetime('now','-14 days'), checked_in_by = ? WHERE id = ?")
+    .run(userId.fatuma, ticket.id);
+}
+
+// Non-successful ledger entries so admin filters have something to show.
+const LEDGER_NOISE = [
+  { buyer: 'njeri', eventIdx: 12, tierIdx: 0, method: 'mpesa', status: 'pending', daysAgo: 0, phone: '254712345678' },
+  { buyer: 'brian', eventIdx: 2, tierIdx: 1, method: 'mpesa', status: 'failed', daysAgo: 1, phone: '254722334455', reason: 'Insufficient funds' },
+  { buyer: 'wanjiku', eventIdx: 8, tierIdx: 0, method: 'card', status: 'cancelled', daysAgo: 2, reason: 'Customer cancelled the request' },
+  { buyer: 'omar', eventIdx: 0, tierIdx: 1, method: 'mpesa', status: 'refunded', daysAgo: 12, phone: '254799887766', reason: 'Duplicate purchase — refunded by admin' },
+  { buyer: 'njeri', eventIdx: 11, tierIdx: 0, method: 'card', status: 'failed', daysAgo: 3, reason: 'Card declined' },
+];
+
+for (const entry of LEDGER_NOISE) {
+  const eventId = eventIds[entry.eventIdx];
+  const eventTiers = db.prepare('SELECT * FROM ticket_types WHERE event_id = ? ORDER BY sort_order').all(eventId);
+  // A payment that never went through should still be about a real price: the
+  // noise rows are all paid attempts, so skip any free tier on that event.
+  const tier = eventTiers.find((t) => t.price_cents > 0) || eventTiers[0];
+  if (!tier) continue;
+  const created = at(-entry.daysAgo, 11, 15);
+  const fee = Math.round(tier.price_cents * (SERVICE_FEE_PERCENT / 100));
+
+  db.prepare(`
+    INSERT INTO transactions (reference, user_id, event_id, purpose, amount_cents, fee_cents, currency, method, provider,
+                              provider_reference, status, payer_phone, failure_reason, metadata, created_at, updated_at)
+    VALUES (?, ?, ?, 'ticket', ?, ?, 'KES', ?, ?, ?, ?, ?, ?, '{}', ?, ?)
+  `).run(
+    `ET-TIX-${String(Math.random().toString(36).slice(2, 7)).toUpperCase()}${entry.daysAgo}`,
+    userId[entry.buyer],
+    eventId,
+    tier.price_cents + fee,
+    fee,
+    entry.method,
+    entry.method === 'mpesa' ? 'mpesa' : 'card',
+    entry.method === 'mpesa' ? `ws_CO_NOISE_${entry.daysAgo}` : `pi_noise_${entry.daysAgo}`,
+    entry.status,
+    entry.phone || '',
+    entry.reason || '',
+    sqlTime(created),
+    sqlTime(created)
+  );
+}
+
+// Promotion campaigns: one active, one pending, one expired.
+function seedPromotion({ eventIdx, owner, plan, status, price, durationDays, daysAgo, transactionStatus }) {
+  const eventId = eventIds[eventIdx];
+  const created = at(-daysAgo, 9, 0);
+  const starts = new Date(created);
+  const ends = new Date(created.getTime() + durationDays * 86400_000);
+
+  const txnInfo = db.prepare(`
+    INSERT INTO transactions (reference, user_id, event_id, purpose, amount_cents, currency, method, provider,
+                              provider_reference, status, receipt, metadata, completed_at, created_at, updated_at)
+    VALUES (?, ?, ?, 'promotion', ?, 'KES', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    `ET-PRO-${String(Math.random().toString(36).slice(2, 7)).toUpperCase()}${daysAgo}`,
+    userId[owner],
+    eventId,
+    price,
+    'mpesa',
+    'mpesa',
+    `ws_CO_PROMO_${daysAgo}`,
+    transactionStatus,
+    transactionStatus === 'successful' ? `SJK${Math.floor(Math.random() * 900000) + 100000}` : '',
+    JSON.stringify({ plan }),
+    transactionStatus === 'successful' ? sqlTime(created) : '',
+    sqlTime(created),
+    sqlTime(created)
+  );
+
+  db.prepare(`
+    INSERT INTO promotions (event_id, user_id, plan, transaction_id, status, price_cents, currency,
+                            duration_days, impressions, clicks, starts_at, ends_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'KES', ?, ?, ?, ?, ?, ?)
+  `).run(
+    eventId,
+    userId[owner],
+    plan,
+    txnInfo.lastInsertRowid,
+    status,
+    price,
+    durationDays,
+    status === 'active' ? 1840 + eventIdx * 23 : 0,
+    status === 'active' ? 96 + eventIdx * 3 : 0,
+    status === 'active' ? sqlTime(created) : '',
+    status === 'active' ? sqlTime(ends) : '',
+    sqlTime(created)
+  );
+}
+
+seedPromotion({ eventIdx: 0, owner: 'daniel', plan: 'sponsored', status: 'active', price: 450000, durationDays: 21, daysAgo: 3, transactionStatus: 'successful' });
+seedPromotion({ eventIdx: 10, owner: 'daniel', plan: 'featured', status: 'active', price: 150000, durationDays: 7, daysAgo: 2, transactionStatus: 'successful' });
+seedPromotion({ eventIdx: 7, owner: 'njeri', plan: 'boost', status: 'pending', price: 280000, durationDays: 14, daysAgo: 0, transactionStatus: 'pending' });
+seedPromotion({ eventIdx: 18, owner: 'fatuma', plan: 'featured', status: 'expired', price: 150000, durationDays: 7, daysAgo: 30, transactionStatus: 'successful' });
+
+const ticketCount = db.prepare('SELECT COUNT(*) AS n FROM tickets').get().n;
+const txnCount = db.prepare('SELECT COUNT(*) AS n FROM transactions').get().n;
+console.log(`· ${txnCount} transactions · ${ticketCount} tickets · 4 promotions`);
+
+/* ------------------------------------------------------------------ *
+ * Notifications
+ * ------------------------------------------------------------------ */
+
+function seedNotification(user, { type, title, body, link, actor, eventIdx, hoursAgo = 2, read = false }) {
+  const when = new Date(Date.now() - hoursAgo * 3600_000);
+  db.prepare(`
+    INSERT INTO notifications (user_id, type, title, body, link, actor_id, event_id, read_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    userId[user], type, title, body, link,
+    actor ? userId[actor] : null,
+    eventIdx != null ? eventIds[eventIdx] : null,
+    read ? sqlTime(when) : '',
+    sqlTime(when)
+  );
+}
+
+seedNotification('njeri', { type: 'ticket', title: 'Your ticket is confirmed', body: `${EVENTS[0].title} — see you on the lawn.`, link: '/tickets', eventIdx: 0, hoursAgo: 1 });
+seedNotification('njeri', { type: 'follow', title: 'Daniel Mwangi published a new event', body: EVENTS[10].title, link: `/events/${eventIds[10]}`, actor: 'daniel', eventIdx: 10, hoursAgo: 5 });
+seedNotification('njeri', { type: 'comment', title: 'Omar Yusuf commented on Jazz at the Arboretum', body: 'Shooting this one. Anyone up for a group photo?', link: `/events/${eventIds[0]}`, actor: 'omar', eventIdx: 0, hoursAgo: 9 });
+seedNotification('njeri', { type: 'promotion', title: 'Workshop seats are filling up', body: 'Design Systems Workshop is 80% booked.', link: `/events/${eventIds[7]}`, eventIdx: 7, hoursAgo: 26, read: true });
+seedNotification('brian', { type: 'event', title: 'Rift Valley Trail Ride start times confirmed', body: 'Wave A departs at 06:15.', link: `/events/${eventIds[2]}`, eventIdx: 2, hoursAgo: 4 });
+seedNotification('wanjiku', { type: 'payment', title: 'Payment received', body: 'KES 90,000 confirmed — reference ET-TIX-4821.', link: '/tickets', hoursAgo: 12 });
+seedNotification('daniel', { type: 'promotion', title: 'Sponsored placement is live', body: `${EVENTS[0].title} is now promoted until the campaign window closes.`, link: `/events/${eventIds[0]}`, hoursAgo: 72 });
+seedNotification('daniel', { type: 'rsvp', title: '3 people are going to Blankets & Wine', body: 'Keep the guest list moving.', link: `/events/${eventIds[10]}`, eventIdx: 10, hoursAgo: 20 });
+seedNotification('admin', { type: 'promotion', title: 'Promotion purchased', body: `${EVENTS[7].title} — boost placement pending payment.`, link: '/admin?tab=promotions', hoursAgo: 1 });
+seedNotification('admin', { type: 'payment', title: 'Payout review', body: '4 transactions settled in the last 24 hours.', link: '/admin?tab=transactions', hoursAgo: 3 });
+
+console.log('· notifications');
+
+/* ------------------------------------------------------------------ *
+ * Chat
+ * ------------------------------------------------------------------ */
+
 function makeDm(a, b, messages) {
   const info = db.prepare("INSERT INTO conversations (type) VALUES ('dm')").run();
   const convId = info.lastInsertRowid;
   const add = db.prepare('INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)');
-  add.run(convId, userId[a]); add.run(convId, userId[b]);
+  add.run(convId, userId[a]);
+  add.run(convId, userId[b]);
+
   const msg = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, created_at) VALUES (?, ?, ?, ?)');
-  let hoursAgo = messages.length * 3 + 6;
+  let hoursAgo = messages.length * 3 + 5;
   for (const [who, body] of messages) {
-    const t = new Date(Date.now() - hoursAgo * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
-    msg.run(convId, userId[who], body, t);
+    msg.run(convId, userId[who], body, sqlTime(new Date(Date.now() - hoursAgo * 3600_000)));
     hoursAgo -= 3;
   }
   return convId;
 }
 
 function makeEventChat(eventIdx, messages) {
-  const info = db.prepare("INSERT INTO conversations (type, event_id, title) VALUES ('event', ?, ?)").run(
-    eventIds[eventIdx], events[eventIdx].title
-  );
+  const info = db.prepare("INSERT INTO conversations (type, event_id, title) VALUES ('event', ?, ?)")
+    .run(eventIds[eventIdx], EVENTS[eventIdx].title);
   const convId = info.lastInsertRowid;
   const add = db.prepare('INSERT INTO conversation_participants (conversation_id, user_id) VALUES (?, ?)');
   const msg = db.prepare('INSERT INTO messages (conversation_id, sender_id, body, created_at) VALUES (?, ?, ?, ?)');
-  let hoursAgo = messages.length * 2 + 4;
+
+  let hoursAgo = messages.length * 2 + 3;
   const seen = new Set();
   for (const [who, body] of messages) {
     if (!seen.has(who)) { add.run(convId, userId[who]); seen.add(who); }
-    const t = new Date(Date.now() - hoursAgo * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ');
-    msg.run(convId, userId[who], body, t);
+    msg.run(convId, userId[who], body, sqlTime(new Date(Date.now() - hoursAgo * 3600_000)));
     hoursAgo -= 2;
   }
   return convId;
 }
 
-makeDm('amara', 'daniel', [
-  ['daniel', 'Hey! Are you bringing the crew to Neon Nights on Friday?'],
-  ['amara', 'Would not miss it. Twelve of us so far — can we get the group rate?'],
-  ['daniel', 'Done. I will send you a code tonight. Stage two at 21:00, do not be late.'],
-  ['amara', 'Perfect. Also — want to co-host the community market next month?'],
+makeDm('njeri', 'daniel', [
+  ['njeri', 'Are the early bird tickets really gone for Jazz at the Arboretum?'],
+  ['daniel', 'Completely. I have put two standard aside for you at the door though.'],
+  ['njeri', 'Perfect — bringing my sister, she has never been.'],
+  ['daniel', 'Nice. Come through gate B, it is much quicker after 18:30.'],
 ]);
-makeDm('amara', 'mei', [
-  ['mei', 'Thanks for the intro to the Launchpad team, they loved the market idea!'],
-  ['amara', 'Amazing. Want to demo at the community day?'],
-  ['mei', 'Yes! I will bring the agent demo. Thursday works for me.'],
-]);
-makeDm('sofia', 'elena', [
-  ['elena', 'The supper club was extraordinary. Still thinking about the second course.'],
-  ['sofia', 'You are sweet. Should we do a collab dinner with the gallery?'],
-  ['elena', 'Yes — dinner + exhibition preview. Let us talk Friday.'],
-]);
-makeDm('kwame', 'zara', [
-  ['zara', 'Thank you for the sunrise session, I slept better than I have in months.'],
-  ['kwame', 'That is what we like to hear. Same time next week?'],
-]);
-makeEventChat(0, [
-  ['daniel', 'Welcome everyone! Doors at 16:00 on Friday.'],
-  ['mei', 'Quick question — are we allowed to bring a small backpack?'],
-  ['daniel', 'Yes, small bags are fine. There is a free cloakroom by gate B.'],
-  ['elena', 'Who is up for the sunrise set on stage three?'],
-  ['kwame', 'In. Setting an alarm and everything.'],
-  ['amara', 'Count the whole community crew in.'],
-]);
-makeEventChat(1, [
-  ['mei', 'Hackathon kick-off is 09:00 sharp. Team formation starts at 09:30.'],
-  ['james', 'Bringing the API sandboxes. Also there will be stickers.'],
-  ['amara', 'Our team is looking for a designer — please find me at breakfast!'],
-]);
-console.log(`✔ chat conversations`);
 
-console.log('\n🌱 Seed complete.');
-console.log('   Demo accounts: amara@eventtracker.app … zara@eventtracker.app');
-console.log('   Password for all: password123\n');
+makeDm('brian', 'kamau', [
+  ['brian', 'Is the 42 km route the same as last season?'],
+  ['kamau', 'Mostly. We cut the farm section after the rains and added 4 km of gravel.'],
+  ['brian', 'Good. I will register the team this week.'],
+]);
+
+makeDm('wanjiku', 'fatuma', [
+  ['wanjiku', 'Any dairy-free options at the coastal supper?'],
+  ['fatuma', 'Yes — the coconut courses are all dairy free. I will note it on your booking.'],
+  ['wanjiku', 'Thank you. Counting down already.'],
+]);
+
+makeDm('njeri', 'lucia', [
+  ['njeri', 'Is pitch night open to designers or just investors?'],
+  ['lucia', 'Absolutely open. Half the room is usually product and design people.'],
+  ['njeri', 'Great, I will come with two colleagues.'],
+]);
+
+makeEventChat(0, [
+  ['daniel', 'Welcome everyone. Gates open at 17:30, music starts at 18:00.'],
+  ['njeri', 'Is the acoustic tent first-come or do we need to book?'],
+  ['daniel', 'First come — it seats about 120 so arrive early if you want a spot.'],
+  ['brian', 'Parking situation at the KFE gate?'],
+  ['daniel', 'Plenty of space until about 19:00, then it starts to fill.'],
+]);
+
+makeEventChat(2, [
+  ['kamau', 'Route notes will go out to registered riders on Thursday.'],
+  ['brian', 'Is there a mechanic at the second water point?'],
+  ['kamau', 'Yes, plus a van that can carry two bikes and four people.'],
+  ['wanjiku', 'Doing the 22 km — is it fine on a gravel bike with 38mm tyres?'],
+  ['kamau', 'That is the ideal setup for the short loop.'],
+]);
+
+console.log('· chat conversations');
+
+// Platform settings the payment flow reads at runtime. The service fee here is
+// the same rate the seeded commission was calculated with.
+db.prepare(`
+  INSERT INTO settings (key, value) VALUES ('service_fee_percent', ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`).run(String(SERVICE_FEE_PERCENT));
+console.log(`· platform settings (service fee ${SERVICE_FEE_PERCENT}%)`);
+
+console.log('\nSeed complete.');
+console.log('  Sign in with admin@eventtracker.app (admin) or any demo account below.');
+console.log('  Demo accounts: admin@ · daniel@ · zawadi@ · kamau@ · fatuma@ · njeri@ · brian@ · wanjiku@ · omar@ · lucia@  (eventtracker.app)');
+console.log(`  Password for all: ${PASSWORD}\n`);
+}
+
+main().catch((error) => {
+  console.error('\nSeed failed:\n', error.stack || error);
+  process.exit(1);
+});
