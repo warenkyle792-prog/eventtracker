@@ -29,3 +29,6 @@ Thumbs.db
 # Editors
 .idea/
 *.swp
+
+# Deliverable archive (kept out of git; rebuild with the zip command in the README)
+eventtracker.zip

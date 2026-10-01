@@ -13,12 +13,11 @@
     <title>EventTracker — discover what's happening around you</title>
 
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;550;600;700&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap"
-      rel="stylesheet"
-    />
+
+    <!-- Type is self-hosted: no third-party request that can hang the first
+         paint, and no exception needed in the content security policy. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-400.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-600.woff2" crossorigin />
 
     <script>
       // Apply the saved theme before first paint to avoid a flash of the wrong theme.
