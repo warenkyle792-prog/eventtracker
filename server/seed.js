@@ -46,7 +46,7 @@ if (existing > 0) {
  * Helpers
  * ------------------------------------------------------------------ */
 
-const UPLOADS = path.join(__dirname, 'uploads');
+const { UPLOADS_DIR: UPLOADS } = require('./paths');
 const COVERS = path.join(UPLOADS, 'covers');
 const AVATARS = path.join(UPLOADS, 'avatars');
 const VIDEOS = path.join(UPLOADS, 'videos');
@@ -157,25 +157,25 @@ function writeAvatar(file, svg) {
  * ------------------------------------------------------------------ */
 
 const CATEGORIES = [
-  { name: 'Music', slug: 'music', icon: 'music', color: '#96325f', gradient: 'linear-gradient(135deg,#96325f,#b85c86)', description: 'Live bands, DJ sets, listening rooms and festivals.' },
-  { name: 'Technology', slug: 'technology', icon: 'cpu', color: '#4a4a4a', gradient: 'linear-gradient(135deg,#4a4a4a,#6e6e6e)', description: 'Meetups, hackathons, workshops and product launches.' },
-  { name: 'Sports', slug: 'sports', icon: 'activity', color: '#6c7326', gradient: 'linear-gradient(135deg,#6c7326,#8d9440)', description: 'Runs, rides, tournaments and training sessions.' },
-  { name: 'Business', slug: 'business', icon: 'briefcase', color: '#6b5540', gradient: 'linear-gradient(135deg,#6b5540,#8d7259)', description: 'Founder meetups, pitch nights and finance clinics.' },
-  { name: 'Food', slug: 'food', icon: 'utensils', color: '#a3541c', gradient: 'linear-gradient(135deg,#a3541c,#c47a3d)', description: 'Supper clubs, markets, tastings and cooking classes.' },
-  { name: 'Arts', slug: 'arts', icon: 'palette', color: '#9c3b32', gradient: 'linear-gradient(135deg,#9c3b32,#bd6157)', description: 'Exhibitions, theatre, film and spoken word.' },
-  { name: 'Community', slug: 'community', icon: 'users', color: '#427a34', gradient: 'linear-gradient(135deg,#427a34,#619a51)', description: 'Clean-ups, volunteer days, camps and neighbourhood meetups.' },
-  { name: 'Wellness', slug: 'wellness', icon: 'heart', color: '#3f7a68', gradient: 'linear-gradient(135deg,#3f7a68,#5f9a86)', description: 'Yoga, breathwork, sound baths and retreats.' },
+  { name: 'Music', slug: 'music', icon: 'music', color: '#1c1c20', gradient: 'linear-gradient(135deg,#1c1c20,#3a3a41)', description: 'Live bands, DJ sets, listening rooms and festivals.' },
+  { name: 'Technology', slug: 'technology', icon: 'cpu', color: '#2f2f35', gradient: 'linear-gradient(135deg,#2f2f35,#4d4d55)', description: 'Meetups, hackathons, workshops and product launches.' },
+  { name: 'Sports', slug: 'sports', icon: 'activity', color: '#43434b', gradient: 'linear-gradient(135deg,#43434b,#616169)', description: 'Runs, rides, tournaments and training sessions.' },
+  { name: 'Business', slug: 'business', icon: 'briefcase', color: '#54545c', gradient: 'linear-gradient(135deg,#54545c,#6e6e76)', description: 'Founder meetups, pitch nights and finance clinics.' },
+  { name: 'Food', slug: 'food', icon: 'utensils', color: '#232328', gradient: 'linear-gradient(135deg,#232328,#414149)', description: 'Supper clubs, markets, tastings and cooking classes.' },
+  { name: 'Arts', slug: 'arts', icon: 'palette', color: '#3a3a41', gradient: 'linear-gradient(135deg,#3a3a41,#55555d)', description: 'Exhibitions, theatre, film and spoken word.' },
+  { name: 'Community', slug: 'community', icon: 'users', color: '#2a2a30', gradient: 'linear-gradient(135deg,#2a2a30,#4a4a52)', description: 'Clean-ups, volunteer days, camps and neighbourhood meetups.' },
+  { name: 'Wellness', slug: 'wellness', icon: 'heart', color: '#4d4d55', gradient: 'linear-gradient(135deg,#4d4d55,#6a6a72)', description: 'Yoga, breathwork, sound baths and retreats.' },
 ];
 
 const CATEGORY_COVERS = {
-  music: { from: '#2a1220', to: '#552040', motif: 'waves' },
-  technology: { from: '#191919', to: '#3a3a3a', motif: 'grid' },
-  sports: { from: '#1f2110', to: '#454c22', motif: 'arcs' },
-  business: { from: '#221a14', to: '#453427', motif: 'steps' },
-  food: { from: '#2b1a0c', to: '#5e3413', motif: 'rings' },
-  arts: { from: '#2a1210', to: '#5c231c', motif: 'rings' },
-  community: { from: '#141f10', to: '#2b4520', motif: 'waves' },
-  wellness: { from: '#11201c', to: '#26453c', motif: 'arcs' },
+  music: { from: '#141416', to: '#2c2c31', motif: 'waves' },
+  technology: { from: '#101012', to: '#242428', motif: 'grid' },
+  sports: { from: '#17171a', to: '#313137', motif: 'arcs' },
+  business: { from: '#121214', to: '#27272c', motif: 'steps' },
+  food: { from: '#1a1a1d', to: '#333339', motif: 'rings' },
+  arts: { from: '#151517', to: '#2e2e33', motif: 'rings' },
+  community: { from: '#131315', to: '#292a2e', motif: 'waves' },
+  wellness: { from: '#18181b', to: '#34343a', motif: 'arcs' },
 };
 
 {
@@ -209,7 +209,7 @@ const USERS = [
   { key: 'lucia', name: 'Lucia Mwende', username: 'lucia', email: 'lucia@eventtracker.app', role: 'organizer', location: 'Nairobi, Kenya', bio: 'Founder community lead. Breakfasts, pitch nights and finance clinics.', interests: 'business,technology' },
 ];
 
-const AVATAR_COLORS = ['#4a4a4a', '#7a4a2a', '#3f7a68', '#a3541c', '#96325f', '#6b5540', '#8a4a17', '#427a34', '#6c7326', '#9c3b32'];
+const AVATAR_COLORS = ['#2f2f35', '#43434b', '#54545c', '#38383e', '#4d4d55', '#2a2a30', '#1c1c20', '#3a3a41', '#616169', '#232328'];
 const userId = {};
 
 USERS.forEach((u, index) => {

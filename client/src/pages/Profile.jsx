@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
-  BadgeCheck, Bookmark, CalendarDays, ExternalLink, Heart, Mail, MapPin, Pencil,
-  Plus, Settings, Ticket, UserMinus, UserPlus, Users,
+  BadgeCheck, Bookmark, CalendarDays, ExternalLink, Heart, LogOut, Mail, MapPin,
+  Pencil, Plus, Settings, ShieldCheck, Ticket, UserMinus, UserPlus, Users,
 } from 'lucide-react';
 
 import EventCard from '../components/EventCard';
@@ -14,6 +14,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useAsync, useDocumentTitle } from '../hooks';
+import { timeAgo } from '../utils/format';
 
 const TABS = [
   { id: 'hosting', label: 'Hosting', icon: <CalendarDays size={15} /> },
@@ -258,6 +259,8 @@ export default function Profile() {
         )}
       </div>
 
+      {profile.is_me && <SignedInDevices />}
+
       <EditProfileModal
         open={editOpen}
         onClose={() => setEditOpen(false)}
@@ -269,6 +272,108 @@ export default function Profile() {
         }}
       />
     </div>
+  );
+}
+
+/**
+ * Where this account is signed in, and the switch to end any of it. Sessions
+ * live on the server, so signing a device out here really does end it — even if
+ * that device still holds a perfectly valid-looking token.
+ */
+function SignedInDevices() {
+  const { toast } = useToast();
+  const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+
+  const load = async () => {
+    try {
+      const data = await api.get('/auth/sessions');
+      setRows(data.sessions || []);
+      setError('');
+    } catch (err) {
+      setError(err.message);
+      setRows([]);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const endSession = async (id) => {
+    setBusy(id);
+    try {
+      await api.del(`/auth/sessions/${id}`);
+      toast('That device has been signed out', 'success');
+      await load();
+    } catch (err) {
+      toast(err.message, 'error');
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const endEverything = async () => {
+    setBusy('all');
+    try {
+      await api.post('/auth/logout-all', {});
+      toast('Signed out of every device', 'success');
+      // The current session is gone too, so send the user to the sign-in page.
+      window.location.assign('/login');
+    } catch (err) {
+      toast(err.message, 'error');
+      setBusy('');
+    }
+  };
+
+  return (
+    <section className="section">
+      <SectionHead title="Security" sub="Devices signed in to your account" />
+      <div className="panel panel--pad">
+        <div className="row row--between">
+          <div className="row gap-3">
+            <span className="cat-tile__icon" style={{ background: 'var(--brand-soft)', color: 'var(--brand)' }}>
+              <ShieldCheck size={18} />
+            </span>
+            <div>
+              <strong>Signed-in devices</strong>
+              <p className="small muted">End any session you do not recognise. Changing your password signs out every other device.</p>
+            </div>
+          </div>
+          <button className="btn btn--secondary btn--sm" onClick={endEverything} disabled={busy === 'all'}>
+            <LogOut size={14} />
+            {busy === 'all' ? 'Signing out…' : 'Sign out everywhere'}
+          </button>
+        </div>
+
+        {rows === null && <div className="mt-4"><LoadingBlock label="Loading sessions…" /></div>}
+        {error && <p className="small text-danger mt-4">{error}</p>}
+
+        {rows && rows.length > 0 && (
+          <ul className="stack stack--sm mt-4" style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {rows.map((row) => (
+              <li key={row.id} className="row row--between" style={{ padding: '10px 0', borderTop: '1px solid var(--border-subtle)' }}>
+                <div>
+                  <strong className="small">{row.label}{row.current ? ' · this device' : ''}</strong>
+                  <p className="small muted">
+                    Last active {timeAgo(row.last_seen_at)}
+                    {row.ip ? ` · ${row.ip}` : ''}
+                  </p>
+                </div>
+                <button
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => endSession(row.id)}
+                  disabled={busy === row.id}
+                >
+                  {busy === row.id ? 'Ending…' : row.current ? 'Sign out' : 'End session'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }
 

@@ -4,9 +4,9 @@
      light  → clean white / light grey surfaces, near-black text
      dark   → true neutral black base, lighter glass surfaces
 
-   Palette rule: no blues anywhere. The accent is a warm copper,
-   the neutrals are hue-free greys (equal RGB channels) so the dark
-   theme reads as black rather than blue-black.
+   Palette rule: monochrome. Every value is a hue-free grey (equal RGB
+   channels), so hierarchy comes from contrast, weight and depth instead of
+   colour. Red is kept for exactly one job: destructive actions and failures.
    ============================================================= */
 
 :root {
@@ -58,21 +58,24 @@
   --max-w: 1200px;
   --max-w-wide: 1360px;
 
-  /* Brand — warm copper, no blue */
-  --brand: #8a4a17;
-  --brand-hover: #753d10;
-  --brand-soft: rgba(138, 74, 23, 0.10);
-  --brand-ring: rgba(138, 74, 23, 0.28);
+  /* Ink — graphite. A primary action is near-black on light and near-white
+     on dark, so "primary" reads from contrast rather than from a hue. */
+  --brand: #1c1c20;
+  --brand-hover: #000000;
+  --brand-soft: rgba(0, 0, 0, 0.06);
+  --brand-ring: rgba(0, 0, 0, 0.24);
   --brand-ink: #ffffff;
 
-  --ok: #0f7a58;
-  --ok-soft: rgba(15, 122, 88, 0.12);
-  --warn: #75600a;
-  --warn-soft: rgba(117, 96, 10, 0.13);
-  --danger: #b93b34;
-  --danger-soft: rgba(185, 59, 52, 0.12);
-  --info: #5f5f5f;
-  --info-soft: rgba(95, 95, 95, 0.12);
+  /* Status is monochrome as well: settled states are solid ink chips, pending
+     states are outlined, and weight plus the label carries the meaning. */
+  --ok: #2a2a2f;
+  --ok-soft: rgba(0, 0, 0, 0.07);
+  --warn: #55555c;
+  --warn-soft: rgba(0, 0, 0, 0.05);
+  --danger: #b3261e;
+  --danger-soft: rgba(179, 38, 30, 0.10);
+  --info: #5a5a62;
+  --info-soft: rgba(0, 0, 0, 0.05);
 
   --focus-ring: 0 0 0 3px var(--brand-ring);
 }
@@ -113,28 +116,26 @@ html[data-theme='light'] {
 
   --overlay: rgba(0, 0, 0, 0.42);
 
-  --bg-blob-1: rgba(160, 90, 30, 0.14);
-  --bg-blob-2: rgba(150, 120, 45, 0.10);
-  --bg-blob-3: rgba(90, 70, 55, 0.07);
-  --bg-aurora-a: rgba(170, 96, 34, 0.11);
-  --bg-aurora-b: rgba(126, 104, 62, 0.09);
+  --bg-blob-1: rgba(0, 0, 0, 0.055);
+  --bg-blob-2: rgba(0, 0, 0, 0.040);
+  --bg-blob-3: rgba(0, 0, 0, 0.030);
+  --bg-aurora-a: rgba(0, 0, 0, 0.045);
+  --bg-aurora-b: rgba(0, 0, 0, 0.030);
   --bg-spot: rgba(255, 255, 255, 0.6);
-  --bg-life: rgba(66, 48, 34, 1);        /* silhouettes, used with low opacity */
-  --bg-life-ink: rgba(66, 48, 34, 0.9);
 
-  /* Galaxy - warm dust, no blue anywhere. Held back so white surfaces and dark
+  /* Galaxy — silver dust over light grey. Held back so white surfaces and dark
      text keep every bit of their contrast. */
-  --galaxy-arm: #7c4112;
-  --galaxy-bright: #b06a1e;
-  --galaxy-core: #8a4a17;
-  --galaxy-star: #4a3a2c;
-  --galaxy-opacity: 0.5;
+  --galaxy-arm: #4c4c4c;
+  --galaxy-bright: #7a7a7a;
+  --galaxy-core: #3a3a3a;
+  --galaxy-star: #303030;
+  --galaxy-opacity: 0.42;
   --galaxy-period: 260s;
   --bg-grid: rgba(0, 0, 0, 0.035);
   --bg-veil: linear-gradient(180deg, rgba(247, 247, 247, 0.6) 0%, rgba(247, 247, 247, 0.85) 60%, var(--bg-0) 100%);
 
   --img-veil: linear-gradient(180deg, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.72) 100%);
-  --bubble-mine: #8a4a17;
+  --bubble-mine: #1c1c20;
   --bubble-mine-text: #ffffff;
   --bubble-theirs: #efefef;
 
@@ -171,20 +172,20 @@ html[data-theme='dark'] {
   --text-3: #7d7d7d;
   --text-inv: #0a0a0a;
 
-  --brand: #dda062;
-  --brand-hover: #eab27a;
-  --brand-soft: rgba(221, 160, 98, 0.14);
-  --brand-ring: rgba(221, 160, 98, 0.30);
-  --brand-ink: #1a1008;
+  --brand: #e8e8ea;
+  --brand-hover: #ffffff;
+  --brand-soft: rgba(255, 255, 255, 0.10);
+  --brand-ring: rgba(255, 255, 255, 0.30);
+  --brand-ink: #0b0b0d;
 
-  --ok: #4cba8e;
-  --ok-soft: rgba(76, 186, 142, 0.14);
-  --warn: #d8bc51;
-  --warn-soft: rgba(216, 188, 81, 0.14);
-  --danger: #e6706a;
-  --danger-soft: rgba(230, 112, 106, 0.14);
-  --info: #a8a8a8;
-  --info-soft: rgba(168, 168, 168, 0.14);
+  --ok: #dcdce0;
+  --ok-soft: rgba(255, 255, 255, 0.10);
+  --warn: #b4b4ba;
+  --warn-soft: rgba(255, 255, 255, 0.07);
+  --danger: #f08a84;
+  --danger-soft: rgba(240, 138, 132, 0.14);
+  --info: #a6a6ac;
+  --info-soft: rgba(255, 255, 255, 0.07);
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5), 0 6px 16px -8px rgba(0, 0, 0, 0.7);
@@ -193,29 +194,27 @@ html[data-theme='dark'] {
 
   --overlay: rgba(0, 0, 0, 0.72);
 
-  --bg-blob-1: rgba(190, 120, 55, 0.10);
-  --bg-blob-2: rgba(150, 115, 60, 0.07);
-  --bg-blob-3: rgba(255, 255, 255, 0.035);
-  --bg-aurora-a: rgba(205, 135, 65, 0.11);
-  --bg-aurora-b: rgba(255, 255, 255, 0.045);
+  --bg-blob-1: rgba(255, 255, 255, 0.050);
+  --bg-blob-2: rgba(255, 255, 255, 0.035);
+  --bg-blob-3: rgba(255, 255, 255, 0.025);
+  --bg-aurora-a: rgba(255, 255, 255, 0.050);
+  --bg-aurora-b: rgba(255, 255, 255, 0.030);
   --bg-spot: rgba(255, 255, 255, 0.06);
-  --bg-life: rgba(214, 226, 235, 1);     /* silhouettes, used with low opacity */
-  --bg-life-ink: rgba(214, 226, 235, 0.9);
 
-  /* The same artwork on black: warm gold light, dimmer overall so the black
-     stays genuinely black. */
-  --galaxy-arm: #c98a4e;
-  --galaxy-bright: #f2d0a6;
-  --galaxy-core: #e8a463;
-  --galaxy-star: #fff4e6;
-  --galaxy-opacity: 0.46;
+  /* The same artwork on black: silver light, dimmer overall so the black stays
+     genuinely black. */
+  --galaxy-arm: #b6b6b6;
+  --galaxy-bright: #ffffff;
+  --galaxy-core: #d6d6d6;
+  --galaxy-star: #ffffff;
+  --galaxy-opacity: 0.42;
   --galaxy-period: 240s;
   --bg-grid: rgba(255, 255, 255, 0.022);
   --bg-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.7) 60%, var(--bg-0) 100%);
 
   --img-veil: linear-gradient(180deg, rgba(0, 0, 0, 0) 38%, rgba(0, 0, 0, 0.88) 100%);
-  --bubble-mine: #dda062;
-  --bubble-mine-text: #1a1008;
+  --bubble-mine: #e8e8ea;
+  --bubble-mine-text: #0b0b0d;
   --bubble-theirs: rgba(255, 255, 255, 0.07);
 
   --scrollbar: rgba(255, 255, 255, 0.16);

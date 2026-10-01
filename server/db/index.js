@@ -15,8 +15,7 @@ const initSqlJs = require('sql.js');
 const path = require('path');
 const fs = require('fs');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const DB_FILE = path.join(DATA_DIR, 'eventtracker.db');
+const { DATA_DIR, DB_FILE } = require('../paths');
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -190,8 +189,8 @@ const SCHEMA = `
     slug TEXT NOT NULL UNIQUE,
     description TEXT DEFAULT '',
     icon TEXT DEFAULT 'sparkles',
-    color TEXT DEFAULT '#8a4a17',
-    gradient TEXT DEFAULT 'linear-gradient(135deg,#8a4a17,#b07a3a)'
+    color TEXT DEFAULT '#1c1c20',
+    gradient TEXT DEFAULT 'linear-gradient(135deg,#1c1c20,#4a4a52)'
   );
 
   CREATE TABLE IF NOT EXISTS events (
@@ -367,6 +366,31 @@ const SCHEMA = `
     body TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    label TEXT DEFAULT '',
+    user_agent TEXT DEFAULT '',
+    ip TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
+
+  CREATE TABLE IF NOT EXISTS login_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    ip TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    succeeded INTEGER NOT NULL DEFAULT 0
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_login_attempts_email ON login_attempts(email, created_at);
 
   CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

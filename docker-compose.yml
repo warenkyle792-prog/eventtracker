@@ -1,0 +1,48 @@
+# Production-ish stack: the app plus a volume for its data.
+#
+#   JWT_SECRET=$(openssl rand -hex 48) TICKET_SECRET=$(openssl rand -hex 32) \
+#     docker compose up -d --build
+#
+# Put a TLS terminator (nginx, Caddy, or your platform's router) in front:
+# the app expects to be reached over HTTPS in production.
+
+services:
+  app:
+    build: .
+    image: eventtracker:latest
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: "5000"
+      # Required: the app refuses to boot in production without a real secret.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET to a long random string}
+      TICKET_SECRET: ${TICKET_SECRET:-}
+      # Public origin, used for share links and payment callbacks.
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-http://localhost:5000}
+      # Extra browser origins allowed to call the API, comma separated.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # Payments: leave blank to stay in sandbox mode.
+      MPESA_ENV: ${MPESA_ENV:-sandbox}
+      MPESA_CONSUMER_KEY: ${MPESA_CONSUMER_KEY:-}
+      MPESA_CONSUMER_SECRET: ${MPESA_CONSUMER_SECRET:-}
+      MPESA_SHORTCODE: ${MPESA_SHORTCODE:-}
+      MPESA_PASSKEY: ${MPESA_PASSKEY:-}
+      MPESA_CALLBACK_URL: ${MPESA_CALLBACK_URL:-}
+      MPESA_CALLBACK_TOKEN: ${MPESA_CALLBACK_TOKEN:-}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+    volumes:
+      # Database and uploads live here — back this up, it is the whole app state.
+      - eventtracker-data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  eventtracker-data:

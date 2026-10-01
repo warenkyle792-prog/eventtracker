@@ -1,0 +1,33 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# Connect the repository and Render provisions everything below. Disk-backed
+# SQLite needs a persistent disk, which requires a paid instance type; the
+# free tier restarts with an empty filesystem.
+services:
+  - type: web
+    name: eventtracker
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true          # Render creates a long random value
+      - key: TICKET_SECRET
+        generateValue: true
+      - key: DATA_DIR
+        value: /var/data
+      - key: UPLOADS_DIR
+        value: /var/data/uploads
+      - key: PUBLIC_APP_URL
+        sync: false                  # set to https://<your-service>.onrender.com
+      - key: MPESA_ENV
+        value: sandbox
+    disk:
+      name: eventtracker-data
+      mountPath: /var/data
+      sizeGB: 1

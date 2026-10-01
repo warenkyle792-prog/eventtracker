@@ -39,6 +39,34 @@ async function call(method, path, { body, token, expect = [200, 201] } = {}) {
   return { status: res.status, payload };
 }
 
+/**
+ * Raw request helper for the checks that care about cookies, headers and
+ * bodies rather than just the JSON payload.
+ */
+async function raw(method, path, { body, headers = {} } = {}) {
+  const res = await fetch(BASE + path, {
+    method,
+    redirect: 'manual',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let payload = null;
+  try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
+  return { status: res.status, payload, headers: res.headers };
+}
+
+/** Record an assertion that is not a single HTTP call. */
+function expect(label, ok, detail = '') {
+  if (ok) {
+    pass += 1;
+    console.log(`  ok   ${label}${detail ? ` — ${detail}` : ''}`);
+  } else {
+    failures.push(`${label}${detail ? ` — ${detail}` : ''}`);
+    console.log(`  FAIL ${label}${detail ? ` — ${detail}` : ''}`);
+  }
+}
+
 async function login(email) {
   const { payload } = await call('POST', '/auth/login', {
     body: { email, password: 'password123' },
@@ -162,6 +190,19 @@ async function main() {
   }
 
   console.log('\nPayment → ticket flow (attendee)');
+  // A brand-new attendee: the demo accounts already hold their per-user ticket
+  // allowance on the seeded events, which would make this flow order-dependent.
+  const buyerStamp = Date.now();
+  const buyerEmail = `buyer${buyerStamp}@example.com`;
+  const buyer = (await call('POST', '/auth/register', {
+    body: {
+      name: 'Smoke Buyer',
+      username: `smokebuyer${buyerStamp % 1000000}`,
+      email: buyerEmail,
+      password: 'SmokeTest!2026',
+    },
+  })).payload.token;
+
   const paidEvent = events.find((e) => Number(e.price_cents) > 0 && Number(e.available) > 0);
   if (paidEvent) {
     const detail = (await call('GET', `/events/${paidEvent.id}`)).payload.event;
@@ -170,11 +211,11 @@ async function main() {
       console.log('  (no purchasable tier left on this event — skipping ticket flow)');
     } else {
     const quote = (await call('POST', '/payments/quote', {
-      token: njeri,
+      token: buyer,
       body: { event_id: paidEvent.id, items: [{ ticket_type_id: paidEvent.ticket_types[0].id, quantity: 1 }] },
     })).payload.quote;
     const intent = (await call('POST', '/payments/intents', {
-      token: njeri,
+      token: buyer,
       body: {
         event_id: paidEvent.id,
         items: [{ ticket_type_id: paidEvent.ticket_types[0].id, quantity: 1 }],
@@ -191,10 +232,10 @@ async function main() {
 
     if (intent.transaction.metadata?.simulate) {
       await call('POST', `/payments/${intent.transaction.reference}/simulate`, {
-        token: njeri, body: { outcome: 'successful' },
+        token: buyer, body: { outcome: 'successful' },
       });
     }
-    const final = (await call('GET', `/payments/${intent.transaction.reference}`, { token: njeri })).payload;
+    const final = (await call('GET', `/payments/${intent.transaction.reference}`, { token: buyer })).payload;
     const issued = final.tickets || [];
     if (final.transaction.status === 'successful' && issued.length === 0) {
       failures.push('no ticket issued for a successful payment');
@@ -231,6 +272,93 @@ async function main() {
     const result = await call('POST', `/events/${freeEvent.id}/register`, { token: admin });
     console.log(`  register → ${result.status} ${result.payload?.already_registered ? '(already registered)' : ''}`);
   }
+
+  console.log('\nSessions');
+  const fresh = await raw('POST', '/auth/login', {
+    body: { email: 'njeri@eventtracker.app', password: 'password123' },
+  });
+  const sessionToken = fresh.payload?.token;
+  const cookie = (fresh.headers.get('set-cookie') || '').split(';')[0];
+  expect('login sets an httpOnly session cookie',
+    /et_session=/.test(cookie) && /httponly/i.test(fresh.headers.get('set-cookie') || ''));
+  expect('login returns a token', Boolean(sessionToken));
+
+  const withCookie = await raw('GET', '/auth/me', { headers: { Cookie: cookie } });
+  expect('a cookie alone restores the session', withCookie.status === 200 && Boolean(withCookie.payload?.user));
+
+  const cookiePost = await raw('POST', '/conversations', { headers: { Cookie: cookie }, body: { participantId: 2 } });
+  expect('a cookie without the app header cannot change state (CSRF)', cookiePost.status === 401, String(cookiePost.status));
+
+  const cookiePostMarked = await raw('POST', '/conversations', {
+    headers: { Cookie: cookie, 'X-Requested-With': 'eventtracker' },
+    body: { participantId: 2 },
+  });
+  expect('the app header makes cookie writes usable', [200, 201].includes(cookiePostMarked.status), String(cookiePostMarked.status));
+
+  const refreshed = await raw('POST', '/auth/refresh', {
+    headers: { Authorization: `Bearer ${sessionToken}`, 'X-Requested-With': 'eventtracker' },
+    body: {},
+  });
+  expect('refresh renews the session', refreshed.status === 200 && Boolean(refreshed.headers.get('x-session-token')));
+
+  const listed = await raw('GET', '/auth/sessions', { headers: { Authorization: `Bearer ${sessionToken}` } });
+  const sessionRows = listed.payload?.sessions || [];
+  expect('sessions are listed for the account', sessionRows.length > 0, `${sessionRows.length} row(s)`);
+  expect('the current device is marked', sessionRows.some((row) => row.current));
+
+  // A second sign-in gives a session that can be revoked without touching the
+  // tokens the rest of this suite depends on.
+  const second = await raw('POST', '/auth/login', { body: { email: 'njeri@eventtracker.app', password: 'password123' } });
+  const secondToken = second.payload?.token;
+  const secondList = await raw('GET', '/auth/sessions', { headers: { Authorization: `Bearer ${sessionToken}` } });
+  const other = (secondList.payload?.sessions || []).find((row) => row.id !== sessionRows.find((r) => r.current)?.id);
+
+  const revoked = await raw('DELETE', `/auth/sessions/${other.id}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+  expect('a session can be revoked', revoked.status === 200);
+
+  const otherAfter = await raw('GET', '/auth/me', { headers: { Authorization: `Bearer ${secondToken}` } });
+  expect('the revoked device is signed out immediately', otherAfter.status === 401, String(otherAfter.status));
+
+  const survivor = await raw('GET', '/auth/me', { headers: { Authorization: `Bearer ${sessionToken}` } });
+  expect('other devices are untouched', survivor.status === 200, String(survivor.status));
+
+  await raw('POST', '/auth/logout', { headers: { Authorization: `Bearer ${sessionToken}` }, body: {} });
+  const afterLogout = await raw('GET', '/auth/me', { headers: { Authorization: `Bearer ${sessionToken}` } });
+  expect('signing out revokes the token server-side', afterLogout.status === 401, String(afterLogout.status));
+
+  console.log('\nAccount protection');
+  const weak = await raw('POST', '/auth/register', {
+    body: { name: 'Weak Pass', username: `weak${Date.now() % 100000}`, email: `weak${Date.now() % 100000}@example.com`, password: 'password123' },
+  });
+  expect('registration rejects a common password', weak.status === 400, weak.payload?.error || '');
+
+  const short = await raw('POST', '/auth/register', {
+    body: { name: 'Short Pass', username: `short${Date.now() % 100000}`, email: `short${Date.now() % 100000}@example.com`, password: 'abc123' },
+  });
+  expect('registration rejects a short password', short.status === 400, short.payload?.error || '');
+
+  const lockEmail = `lockout${Date.now() % 1000000}@example.com`;
+  let locked = 0;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const bad = await raw('POST', '/auth/login', { body: { email: lockEmail, password: 'wrong-password-1' } });
+    if (bad.status === 429) { locked = attempt + 1; break; }
+  }
+  expect('repeated failures lock the account', locked > 0, locked ? `locked after ${locked} attempts` : 'never locked');
+
+  console.log('\nHardening');
+  const shell = await raw('GET', '/../'.replace('/..', '') || '/');
+  expect('the app sends a content security policy', Boolean(shell.headers.get('content-security-policy')));
+  expect('and blocks MIME sniffing', shell.headers.get('x-content-type-options') === 'nosniff');
+  expect('the inline theme script is allowed by hash, not unsafe-inline',
+    /sha256-/.test(shell.headers.get('content-security-policy') || '')
+    && !/script-src[^;]*unsafe-inline/.test(shell.headers.get('content-security-policy') || ''));
+  expect('the framework banner is hidden', !shell.headers.get('x-powered-by'));
+
+  const svgUpload = await raw('POST', '/uploads?kind=cover', {
+    headers: { Authorization: `Bearer ${admin}` },
+    body: { data: `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>alert(1)</script></svg>').toString('base64')}` },
+  });
+  expect('SVG uploads are refused', svgUpload.status === 400, svgUpload.payload?.error || String(svgUpload.status));
 
   console.log('\nAdmin routes');
   await call('GET', '/admin/overview', { token: admin });

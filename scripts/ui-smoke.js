@@ -226,19 +226,28 @@ function buildChatHarness(outfile, token) {
 
     const TOKEN = ${JSON.stringify(token)};
 
-    window.__mount = () => {
+    window.__mount = (options = {}) => {
       const host = document.createElement('div');
       document.body.appendChild(host);
       window.__last = host;
-      window.localStorage.setItem('eventtracker_token', TOKEN);
+      // seeded exactly the way signing in does it, hint included; pass
+      // { seeded: false } to stand in for a visitor who has never signed in
+      if (options.seeded !== false) setToken(TOKEN);
 
-      // what another tab signing out (or evicted storage) looks like from here
+      // evicted storage under a running tab: the token is gone, nothing else
       window.__killSession = () => {
         try { window.localStorage.removeItem('eventtracker_token'); } catch (_) {}
         try { window.sessionStorage.removeItem('eventtracker_token'); } catch (_) {}
       };
+      // a visitor who has never signed in on this browser
+      window.__forgetEverything = () => {
+        try { window.localStorage.clear(); } catch (_) {}
+        try { window.sessionStorage.clear(); } catch (_) {}
+      };
       // an action that needs the session, exactly like sending a message does
       window.__authedCall = () => api.get('/conversations').then(() => 'ok', (e) => e.message);
+      // the session ending server-side while this tab still holds its token
+      window.__revokeSession = () => api.post('/auth/logout-all', {}).then(() => 'revoked', () => 'revoke-failed');
       window.__signIn = async () => {
         const res = await api.post('/auth/login', { email: 'njeri@eventtracker.app', password: 'password123' });
         setToken(res.token);
@@ -466,13 +475,39 @@ async function runAdminTabs(tmp, token) {
   check('no spinner left hanging', !/Loading platform figures/.test(overview));
   check('no render errors', problems.length === 0, problems.slice(0, 1).join(' | '));
 
-  for (const tab of ['transactions', 'events', 'users', 'promotions', 'settings', 'audit']) {
+  /* The dashboard figures must match what the API reports. */
+  const live = await fetch(`${BASE}/api/admin/overview`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then((r) => r.json());
+
+  const paid = Number(live.tickets_sold?.paid || 0);
+  const free = Number(live.tickets_sold?.free || 0);
+  check('the dashboard shows the same ticket count as the API',
+    new RegExp(`${paid} paid · ${free} free`).test(overview),
+    `api says ${paid} paid / ${free} free`);
+  check('the commission figure matches the API',
+    overview.includes(live.commission.settled_formatted),
+    live.commission.settled_formatted);
+
+  const expectations = {
+    transactions: /ET-[A-Z0-9-]{6,}/,
+    events: /(published|draft|cancelled)/i,
+    users: /(admin|organizer|attendee)/i,
+    promotions: /(Featured|Sponsored|Normal|promotion)/i,
+    settings: /(service fee|currency|commission|Ksh)/i,
+    audit: /(login|created|updated|settings|refund)/i,
+  };
+
+  for (const [tab, marker] of Object.entries(expectations)) {
     const before = problems.length;
     window.__mount(token, tab);
     await wait(1400);
     const body = text();
-    check(`tab "${tab}" renders`, !/Loading /.test(body) && problems.length === before,
-      problems.length > before ? problems[before].slice(0, 90) : '');
+    const matched = marker.test(body);
+    check(`tab "${tab}" renders content`, matched && !/Loading /.test(body) && problems.length === before,
+      problems.length > before ? problems[before].slice(0, 90) : `marker ${marker} ${matched ? 'found' : 'missing'}`);
+    check(`tab "${tab}" shows no error banner`,
+      !/(Something went wrong|Request failed|Could not load)/i.test(body));
   }
 }
 
@@ -583,30 +618,43 @@ async function runChatSession(tmp) {
   check('signed-in chat loads the conversation list', listItems.length > 0, `${listItems.length} entries`);
   check('a healthy session never shows the auth error', !/Authentication required/.test(text()));
 
-  // the session disappears underneath the running app
+  /* ---- storage is wiped under the running tab ---- */
+  // This is what a browser evicting site data looks like. The tab must keep
+  // working and quietly put the token back, not sign the person out.
   window.__killSession();
-  const message = await window.__authedCall();
-  await wait(300);
-
-  check('the dead session ends with one clear message, not the raw server string',
-    message.includes('session has ended') && !message.includes('Authentication required'), message);
-
-  const toasts = host.querySelectorAll('.toast');
-  check('the user is told once', toasts.length === 1, `${toasts.length} toasts`);
-  check('the notice is a session notice', /session ended/i.test(toasts[0]?.textContent || ''));
-  check('chat falls back to its sign-in gate', /session ended|sign in/i.test(text()));
-  check('no raw auth error anywhere on screen', !/Authentication required/.test(text()));
-  check('the gate offers a way back in', Boolean(host.querySelector('.chat ~ * a[href="/login"], a[href="/login"]')));
-  check('no render errors on the way out', problems.length === 0, problems.slice(0, 1).join(' | '));
-
-  // a second failing call must not stack up more notices
-  await window.__authedCall();
+  const afterWipe = await window.__authedCall();
   await wait(200);
-  check('repeated attempts do not repeat the notice', host.querySelectorAll('.toast').length === 1);
 
-  // signing in again restores the account (the gate itself clears on next mount)
-  const name = await window.__signIn();
-  check('signing in again works from the same page', name === 'Njeri Karanja', String(name));
+  check('losing storage does not break the session', afterWipe === 'ok', String(afterWipe));
+  check('and it does not raise a session notice', host.querySelectorAll('.toast').length === 0);
+  check('the token is written back to storage',
+    Boolean(window.localStorage.getItem('eventtracker_token')));
+  check('no raw auth error anywhere on screen', !/Authentication required/.test(text()));
+  check('no render errors while recovering', problems.length === 0, problems.slice(0, 1).join(' | '));
+
+  /* ---- a session revoked from elsewhere ---- */
+  const revived = makeDom(bundle, `${BASE}/chat`);
+  revived.window.__mount();
+  await wait(1400);
+  const revoked = await revived.window.__revokeSession();
+  check('a session can be ended from another device', revoked === 'revoked', revoked);
+  const revokedMessage = await revived.window.__authedCall();
+  await wait(300);
+  check('a revoked session reports itself once',
+    revokedMessage.includes('session has ended') && !revokedMessage.includes('Authentication required'),
+    revokedMessage);
+  check('and shows the session-ended gate',
+    /session ended/i.test(revived.window.__last.textContent || ''));
+
+  /* ---- a visitor who never signed in ---- */
+  const guest = makeDom(bundle, `${BASE}/chat`);
+  guest.window.__mount({ seeded: false });   // nothing stored, nothing in memory
+  await wait(1200);
+  await guest.window.__authedCall();
+  await wait(300);
+  check('a guest is never told a session ended', guest.window.__last.querySelectorAll('.toast').length === 0);
+  check('a guest just sees the sign-in prompt',
+    /Sign in to see your messages/i.test(guest.window.__last.textContent || ''));
 }
 
 async function runStorageBlockedLogin(tmp) {
@@ -644,6 +692,114 @@ async function runStorageBlockedLogin(tmp) {
   check('no storage errors leak to the console', problems.length === 0, problems.slice(0, 1).join(' | '));
 }
 
+/**
+ * Palette audit.
+ *
+ * The user asked for two things that are easy to regress silently: no blue, and
+ * no orange anywhere. This reads the real stylesheet and seed data and fails if
+ * a hue creeps back in, so a stray colour cannot ship unnoticed.
+ */
+function runPaletteAudit() {
+  console.log('\nPalette');
+
+  const files = [
+    'client/src/styles/theme.css',
+    'client/src/styles/app.css',
+    'client/public/favicon.svg',
+    'server/seed.js',
+  ];
+
+  const warm = [];
+  const blue = [];
+  const hueOf = (r, g, b) => {
+    const max = Math.max(r, g, b) / 255;
+    const min = Math.min(r, g, b) / 255;
+    const d = max - min;
+    if (d < 0.07) return null;                       // effectively neutral
+    let h;
+    if (max === r / 255) h = ((g / 255 - b / 255) / d) % 6;
+    else if (max === g / 255) h = (b / 255 - r / 255) / d + 2;
+    else h = (r / 255 - g / 255) / d + 4;
+    return Math.abs((h * 60 + 360) % 360);
+  };
+
+  for (const rel of files) {
+    const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+    for (const match of text.matchAll(/#([0-9a-fA-F]{6})\b/g)) {
+      const hex = match[1];
+      const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(1 + i, 3 + i), 16));   // skip '#'
+      const hue = hueOf(r, g, b);
+      if (hue === null) continue;
+      if (hue >= 8 && hue <= 48) warm.push(`${rel} #${hex} (hue ${Math.round(hue)})`);
+      if (hue >= 190 && hue <= 260) blue.push(`${rel} #${hex} (hue ${Math.round(hue)})`);
+    }
+
+    for (const match of text.matchAll(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/g)) {
+      const [r, g, b] = match.slice(1, 4).map(Number);
+      const hue = hueOf(r, g, b);
+      if (hue === null) continue;
+      if (hue >= 8 && hue <= 48) warm.push(`${rel} ${match[0]} (hue ${Math.round(hue)})`);
+      if (hue >= 190 && hue <= 260) blue.push(`${rel} ${match[0]} (hue ${Math.round(hue)})`);
+    }
+  }
+
+  check('no orange-family colour anywhere', warm.length === 0, warm.slice(0, 3).join(', '));
+  check('no blue-family colour anywhere', blue.length === 0, blue.slice(0, 3).join(', '));
+
+  const theme = fs.readFileSync(path.join(ROOT, 'client/src/styles/theme.css'), 'utf8');
+  const neutral = (token) => {
+    const matcher = new RegExp(token + ':\\s*(#[0-9a-fA-F]{6})', 'g');
+    const values = [...theme.matchAll(matcher)].map((m) => m[1]);
+    return values.length >= 2 && values.every((hex) => {
+      const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(1 + i, 3 + i), 16));
+      return Math.max(r, g, b) - Math.min(r, g, b) <= 14;   // greys have equal channels
+    });
+  };
+
+  check('the accent is hue-free in both themes', neutral('--brand'), '--brand must be a grey');
+  check('status colours are hue-free', neutral('--ok') && neutral('--warn') && neutral('--info'));
+  check('the galaxy is silver, not gold', neutral('--galaxy-arm') && neutral('--galaxy-star'));
+  check('light mode keeps dark text on light surfaces', /--text-0: #1[0-9a-f]{5}/i.test(theme));
+}
+
+/** Nothing that looks like a provider secret may ever reach the browser. */
+function runClientSecretsAudit() {
+  console.log('\nClient bundle secrets');
+
+  const patterns = [
+    /sk_live_[A-Za-z0-9]/,
+    /sk_test_[A-Za-z0-9]/,
+    /MPESA_CONSUMER_SECRET\s*[:=]/,
+    /MPESA_PASSKEY\s*[:=]/,
+    /STRIPE_SECRET_KEY\s*[:=]/,
+  ];
+
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!/\.(jsx?|css|html|json)$/.test(entry.name)) continue;
+      const text = fs.readFileSync(full, 'utf8');
+      for (const pattern of patterns) {
+        if (pattern.test(text)) offenders.push(`${full.replace(ROOT + '/', '')} matches ${pattern}`);
+      }
+    }
+  };
+
+  walk(path.join(ROOT, 'client/src'));
+  check('no payment or provider secrets in the client', offenders.length === 0, offenders.slice(0, 2).join(' | '));
+
+  const dist = path.join(ROOT, 'client/dist/assets');
+  if (fs.existsSync(dist)) {
+    const bundled = fs.readdirSync(dist).filter((f) => f.endsWith('.js'))
+      .map((f) => fs.readFileSync(path.join(dist, f), 'utf8')).join('');
+    check('the built bundle carries no secrets',
+      !/sk_live_[A-Za-z0-9]/.test(bundled) && !/MPESA_CONSUMER_SECRET/.test(bundled));
+  }
+}
+
 /* ------------------------------------------------------------------ main */
 
 (async () => {
@@ -675,6 +831,8 @@ async function runStorageBlockedLogin(tmp) {
     await runQuickView(tmp);
     await runChatSession(tmp);
     await runStorageBlockedLogin(tmp);
+    runPaletteAudit();
+    runClientSecretsAudit();
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

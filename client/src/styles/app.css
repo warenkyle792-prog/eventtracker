@@ -1324,7 +1324,7 @@ html[data-theme='dark'] .event-card {
 }
 
 .event-card__fav:hover { background: rgba(10, 10, 10, 0.78); }
-.event-card__fav.is-saved { color: #ffd166; background: rgba(10, 10, 10, 0.78); }
+.event-card__fav.is-saved { color: #ffffff; background: rgba(10, 10, 10, 0.82); }
 
 .event-card__flags {
   position: absolute;
@@ -1351,7 +1351,7 @@ html[data-theme='dark'] .event-card {
   -webkit-backdrop-filter: blur(8px);
 }
 
-.flag--promoted { background: rgba(138, 74, 23, 0.92); border-color: rgba(255, 255, 255, 0.22); }
+.flag--promoted { background: rgba(12, 12, 14, 0.88); border-color: rgba(255, 255, 255, 0.24); }
 .flag--free { background: rgba(15, 138, 99, 0.85); border-color: rgba(255, 255, 255, 0.22); }
 .flag--soldout { background: rgba(160, 60, 55, 0.85); border-color: rgba(255, 255, 255, 0.22); }
 

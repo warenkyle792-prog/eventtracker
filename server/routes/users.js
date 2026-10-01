@@ -3,9 +3,11 @@ const bcrypt = require('bcryptjs');
 const db = require('../db');
 const { requireAuth, optionalAuth } = require('../middleware/auth');
 const {
-  getUserById, getUserByUsername, userStats, mapEventRow,
+  getUserById, getUserByUsername, userStats, mapEventRow, audit,
 } = require('../db/helpers');
 const notifications = require('../services/notifications');
+const sessions = require('../services/sessions');
+const security = require('../services/security');
 const tickets = require('../services/tickets');
 const promotions = require('../services/promotions');
 const payments = require('../services/payments');
@@ -52,9 +54,12 @@ router.put('/me', requireAuth, (req, res) => {
   if (!me) return res.status(404).json({ error: 'User not found' });
 
   let hash = me.password_hash;
+  let passwordChanged = false;
   if (password) {
-    if (String(password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
-    hash = bcrypt.hashSync(String(password), 10);
+    const issue = security.passwordProblem(password, { username: me.username, email: me.email, name: me.name });
+    if (issue) return res.status(400).json({ error: issue });
+    hash = bcrypt.hashSync(String(password), 12);
+    passwordChanged = true;
   }
 
   const interestString = interests !== undefined
@@ -77,6 +82,15 @@ router.put('/me', requireAuth, (req, res) => {
     hash,
     req.userId
   );
+
+  /**
+   * Changing a password ends every other session: a stolen token or an open
+   * session on someone else's device must not survive it.
+   */
+  if (passwordChanged) {
+    sessions.revokeAll(req.userId, { exceptId: req.sessionId });
+    audit(req.userId, 'account.password_changed', 'user', req.userId, {});
+  }
 
   res.json({ user: profileWithStats(getUserById(req.userId), req.userId) });
 });

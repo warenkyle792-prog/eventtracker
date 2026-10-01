@@ -27,6 +27,52 @@ function safeStorage(kind) {
   }
 }
 
+const HINT_KEY = 'eventtracker_session';
+
+/**
+ * Some browsers refuse storage entirely. A memory-only hint still tells the app
+ * on the next load that a cookie session may exist, so it can ask the server
+ * instead of assuming the visitor is a stranger.
+ */
+export function markSession(active) {
+  memoryToken.hadSession = Boolean(active);
+  for (const kind of ['localStorage', 'sessionStorage']) {
+    const store = safeStorage(kind);
+    if (!store) continue;
+    try {
+      if (active) store.setItem(HINT_KEY, '1');
+      else store.removeItem(HINT_KEY);
+    } catch {
+      /* keep going */
+    }
+  }
+}
+
+/** Re-persist a token that storage lost while the tab kept working. */
+function persistTokenIfMissing(token) {
+  if (!token) return;
+  for (const kind of ['localStorage', 'sessionStorage']) {
+    try {
+      if (window[kind].getItem(TOKEN_KEY) === token) return;   // already stored
+    } catch {
+      /* check the next store */
+    }
+  }
+  setToken(token);
+}
+
+export function hadSession() {
+  if (memoryToken.hadSession) return true;
+  for (const kind of ['localStorage', 'sessionStorage']) {
+    try {
+      if (window[kind].getItem(HINT_KEY)) return true;
+    } catch {
+      /* try the next store */
+    }
+  }
+  return false;
+}
+
 export function getToken() {
   for (const kind of ['localStorage', 'sessionStorage']) {
     try {
@@ -52,6 +98,8 @@ export function setToken(token) {
       /* keep going — another store may accept it */
     }
   }
+
+  if (token) markSession(true);
 }
 
 /* ------------------------------------------------------------------ *
@@ -94,10 +142,16 @@ export class ApiError extends Error {
 }
 
 async function request(path, { method = 'GET', body, formData, auth = true, signal } = {}) {
-  const headers = {};
+  const headers = {
+    // Marks the request as coming from the app itself: the server only accepts
+    // a session cookie for state-changing calls when this header is present,
+    // which a cross-site form cannot set.
+    'X-Requested-With': 'eventtracker',
+  };
   const token = getToken();
+  const sentCredentials = Boolean(auth && token);
 
-  if (auth && token) headers.Authorization = `Bearer ${token}`;
+  if (sentCredentials) headers.Authorization = `Bearer ${token}`;
   if (body && !formData) headers['Content-Type'] = 'application/json';
 
   let res;
@@ -106,12 +160,23 @@ async function request(path, { method = 'GET', body, formData, auth = true, sign
     res = await fetch(`/api${path}`, {
       method,
       headers,
+      credentials: 'same-origin',
       body: formData ? body : body ? JSON.stringify(body) : undefined,
       signal,
     });
   } catch (error) {
     if (error.name === 'AbortError') throw error;
     throw new ApiError('Network unavailable — check your connection and try again.', 0);
+  }
+
+  // The server slides the session and hands back a fresh token when the
+  // current one ages out; adopt it so storage never holds a stale value.
+  const refreshed = res.headers?.get?.('X-Session-Token');
+  if (refreshed) {
+    setToken(refreshed);
+    markSession(true);
+  } else if (sentCredentials && res.ok) {
+    persistTokenIfMissing(token);
   }
 
   let data = null;
@@ -122,9 +187,18 @@ async function request(path, { method = 'GET', body, formData, auth = true, sign
   }
 
   if (!res.ok) {
-    if (res.status === 401) {
-      // Drop the dead session everywhere before surfacing the failure.
+    /**
+     * A 401 means "your session ended" when this request carried a session, or
+     * when the app believes one exists — the token may have been wiped from
+     * storage under a running tab, which is exactly how people end up signed
+     * out without being told. It never applies to the sign-in form itself, and
+     * a visitor who was never signed in is simply a guest.
+     */
+    const credentialsAttempt = path === '/auth/login' || path === '/auth/register' || path === '/auth/refresh';
+    const believesSignedIn = sentCredentials || hadSession();
+    if (res.status === 401 && believesSignedIn && !credentialsAttempt) {
       setToken(null);
+      markSession(false);
       reportUnauthorized();
       throw new ApiError(SESSION_ENDED_MESSAGE, 401, data);
     }

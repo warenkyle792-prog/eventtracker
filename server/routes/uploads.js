@@ -13,7 +13,7 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-const UPLOAD_ROOT = path.join(__dirname, '..', 'uploads');
+const { UPLOADS_DIR: UPLOAD_ROOT } = require('../paths');
 const KINDS = {
   cover: { dir: 'covers', maxBytes: 8 * 1024 * 1024 },
   avatar: { dir: 'avatars', maxBytes: 6 * 1024 * 1024 },

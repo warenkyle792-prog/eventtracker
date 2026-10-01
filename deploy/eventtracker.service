@@ -1,0 +1,35 @@
+# systemd unit for a VPS install (/srv/eventtracker).
+#
+#   sudo cp deploy/eventtracker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now eventtracker
+#
+# Secrets belong in the EnvironmentFile, not in this unit: copy .env.example to
+# /etc/eventtracker.env, fill it in, then `chmod 600 /etc/eventtracker.env`.
+
+[Unit]
+Description=EventTracker (API, sockets and built client)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eventtracker
+WorkingDirectory=/srv/eventtracker
+EnvironmentFile=/etc/eventtracker.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node server/index.js
+Restart=always
+RestartSec=3
+
+# Keep the service inside its own sandbox.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/eventtracker/server/data /srv/eventtracker/server/uploads
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
