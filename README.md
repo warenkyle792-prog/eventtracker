@@ -288,6 +288,23 @@ NODE_ENV=production PORT=5000 \
 platform health check at it. The server shuts down cleanly on `SIGTERM`,
 flushing the database before exit.
 
+### First run on an empty database
+
+A fresh deployment starts with an empty database: the schema is created at boot
+and every route works, but there are no accounts yet. Register through the app,
+then appoint the first administrator from the server — the admin area requires
+one, so it cannot be granted from inside the app:
+
+```bash
+npm run make-admin -- you@example.com     # grant admin
+npm run make-admin -- --list              # list accounts and roles
+npm run make-admin -- you@example.com --demote
+```
+
+Copying the bundled `server/data/eventtracker.db` instead (as it ships in the
+archive) gives you the demo dataset, including `admin@eventtracker.app`.
+`npm run reset-db` rebuilds that demo dataset at any time.
+
 ### Docker
 
 ```bash
@@ -327,6 +344,7 @@ as an unprivileged user with a hardened unit. Copy `.env.example` to
 
 ```bash
 npm run recolour   # rewrites pre-existing category colours and generated artwork
+npm run make-admin -- you@example.com        # appoint or demote an administrator
 npm run reset-db   # only if you want the demo dataset again — this drops data
 ```
 

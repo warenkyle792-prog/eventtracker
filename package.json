@@ -18,7 +18,8 @@
     "reset-db": "node server/seed.js --reset",
     "test:api": "node scripts/smoke.js",
     "test:ui": "node scripts/ui-smoke.js",
-    "recolour": "node scripts/recolour.js"
+    "recolour": "node scripts/recolour.js",
+    "make-admin": "node scripts/make-admin.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
