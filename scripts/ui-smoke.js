@@ -149,6 +149,38 @@ function buildLoginHarness(outfile) {
   });
 }
 
+/**
+ * Bundle a harness that mounts the marine layer on its own, so the ambience is
+ * covered by the same test as the screens it sits behind.
+ */
+function buildMarineHarness(outfile) {
+  const source = `
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import MarineLife from '${ROOT}/client/src/components/MarineLife.jsx';
+
+    window.__mount = () => {
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      window.__last = host;
+      createRoot(host).render(<MarineLife />);
+    };
+  `;
+
+  esbuild.buildSync({
+    stdin: { contents: source, resolveDir: ROOT, loader: 'jsx' },
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    jsx: 'automatic',
+    target: 'es2020',
+    define: { 'process.env.NODE_ENV': '"development"', 'import.meta.env': '"production"' },
+    loader: { '.css': 'empty' },
+    logLevel: 'error',
+    outfile,
+  });
+}
+
 /* --------------------------------------------------------------- the DOM */
 
 function makeDom(bundle, url) {
@@ -271,6 +303,44 @@ async function runAdminTabs(tmp, token) {
   }
 }
 
+async function runMarineLayer(tmp) {
+  console.log('\nLive background');
+  const bundle = path.join(tmp, 'marine.js');
+  buildMarineHarness(bundle);
+
+  const { window, problems } = makeDom(bundle, `${BASE}/`);
+  window.__mount();
+  await wait(400);
+
+  const host = window.__last;
+  const all = (selector) => host.querySelectorAll(selector);
+  const sea = all('.app-bg__sea');
+  check('sea layer mounted', sea.length === 1);
+
+  const species = [
+    ['sea-item--fish', 5, 'reef fish'],
+    ['sea-item--ray', 2, 'manta rays'],
+    ['sea-item--turtle', 1, 'sea turtle'],
+    ['sea-item--jelly', 2, 'jellyfish'],
+    ['sea-item--school', 1, 'school'],
+  ];
+  for (const [className, expected, label] of species) {
+    const found = all(`.${className}`).length;
+    check(`${expected} × ${label}`, found === expected, `found ${found}`);
+  }
+
+  check('eight fish in the school', all('.sea-school__fish').length === 8);
+  check('eight bubble strands', all('.sea-bubble').length === 8);
+
+  const tinted = [...species.map(([c]) => c), 'sea-bubble']
+    .filter((className) => all(`.${className}`).length > 0).length;
+  check('every species is tinted', tinted === 6, `${tinted}/6`);
+
+  const vars = host.querySelector('.sea-item')?.getAttribute('style') || '';
+  check('each swimmer carries its own lane and speed', /--lane:/.test(vars) && /--dur:/.test(vars) && /--o:/.test(vars));
+  check('no render errors', problems.length === 0, problems.slice(0, 1).join(' | '));
+}
+
 /* ------------------------------------------------------------------ main */
 
 (async () => {
@@ -298,6 +368,7 @@ async function runAdminTabs(tmp, token) {
   try {
     const token = await runLoginFlow(tmp);
     await runAdminTabs(tmp, login.token || token);
+    await runMarineLayer(tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

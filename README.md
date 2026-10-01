@@ -86,9 +86,14 @@ database and a bundled demo dataset (cover artwork included, no external assets)
   pointer, and marine life drifting across the water — reef fish including a
   small school, manta rays whose wings beat, a paddling sea turtle, jellyfish
   pulsing with trailing tentacles and rising bubbles. Each creature travels on
-  its own lane, speed and depth. The layer pauses when the tab is hidden, turns
-  still with the creatures hidden under `prefers-reduced-motion`, and keeps only
-  the near, sharper creatures on small screens
+  its own lane, speed and depth. Every species is tinted from the theme's own
+  warm range — copper reef fish, a gold school, rose manta rays, a green turtle
+  and brick jellyfish, each with lighter fins, wing tips, flippers and oral arms
+  (still no blue) — and each theme lifts the opacity just enough for the colour
+  to register on white or on black without ever competing with the text. The
+  layer pauses when the tab is hidden, turns still with the creatures hidden
+  under `prefers-reduced-motion`, and keeps only the near, sharper creatures on
+  small screens
 - Real light and dark themes — clean white/light grey in light mode, true
   neutral black in dark mode (no blue cast) — with a switcher in the navbar
 - A deliberately blue-free palette: warm copper accent over hue-free greys,
@@ -142,8 +147,9 @@ npm run test:ui      # renders the real React tree in jsdom and drives it
 
 `test:api` covers the endpoints; `test:ui` covers the screens — it signs in
 through the actual login form, checks that a wrong password is refused in place
-and a correct one lands on the home page, then renders the admin dashboard and
-every admin tab against live data. Bugs like a form that threw before it could
+and a correct one lands on the home page, renders the admin dashboard and every
+admin tab against live data, and mounts the marine layer to check each species
+is present and tinted. Bugs like a form that threw before it could
 navigate, or a dashboard that crashed rendering an object as a React child, only
 show up in a real render.
 

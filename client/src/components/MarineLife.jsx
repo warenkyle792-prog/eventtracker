@@ -17,6 +17,12 @@
  * from scale, blur and opacity — near creatures are larger and sharper, far
  * ones are smaller, softer and fainter.
  *
+ * Colour is per species — copper reef fish, a gold school, plum rays, a green
+ * turtle and brick jellyfish, with lighter fins, wing tips, flippers and oral
+ * arms for a second tone. Every tint comes from the theme's own warm range and
+ * sits at the same low opacity as before, so the water gains colour without
+ * ever competing with the page.
+ *
  * Everything animates with CSS transforms only, so there is no per-frame
  * JavaScript and the whole layer costs almost nothing.
  */
@@ -27,13 +33,13 @@ function ReefFish() {
   return (
     <svg viewBox="0 0 96 44" role="presentation" focusable="false" className="sea-fish">
       {/* caudal (tail) fin */}
-      <path d="M28 17 C20 9 12 3.5 4 3 C9 13 9 31 4 41 C12 40.5 20 35 28 27 Z" fillOpacity="0.72" />
+      <path d="M28 17 C20 9 12 3.5 4 3 C9 13 9 31 4 41 C12 40.5 20 35 28 27 Z" fill="var(--sea-fish-fin)" fillOpacity="0.78" />
       {/* dorsal fin */}
-      <path d="M40 9 C48 2.5 60 1.5 68 7 C58 8.5 48 9 40 9 Z" fillOpacity="0.72" />
+      <path d="M40 9 C48 2.5 60 1.5 68 7 C58 8.5 48 9 40 9 Z" fill="var(--sea-fish-fin)" fillOpacity="0.82" />
       {/* anal fin */}
-      <path d="M50 35.5 C56 41 66 42.5 72 38.5 C64 37.5 56 36.5 50 35.5 Z" fillOpacity="0.72" />
+      <path d="M50 35.5 C56 41 66 42.5 72 38.5 C64 37.5 56 36.5 50 35.5 Z" fill="var(--sea-fish-fin)" fillOpacity="0.6" />
       {/* pectoral fin */}
-      <path d="M78 25 C71 30.5 62 34.5 54 35.5 C61 30 68 26.5 74 23.5 Z" fillOpacity="0.62" />
+      <path d="M78 25 C71 30.5 62 34.5 54 35.5 C61 30 68 26.5 74 23.5 Z" fill="var(--sea-fish-fin)" fillOpacity="0.55" />
       {/* body */}
       <path d="M92 22 C86 11 70 6 52 7.5 C40 8.5 31 12 27 16.5 L27 27.5 C31 32 40 35.5 52 36.5 C70 38 86 33 92 22 Z" />
       {/* gill line */}
@@ -59,7 +65,7 @@ function MantaRay() {
   return (
     <svg viewBox="0 0 160 92" role="presentation" focusable="false" className="sea-manta">
       {/* whip tail */}
-      <path d="M66 46 C46 46.5 20 47.3 2 46 C20 44.7 46 45.5 66 46 Z" fillOpacity="0.85" />
+      <path d="M66 46 C46 46.5 20 47.3 2 46 C20 44.7 46 45.5 66 46 Z" fill="var(--sea-ray-tip)" fillOpacity="0.8" />
       <g className="sea-manta__wings">
         {/* upper wing */}
         <path d="M150 46 C140 29 116 15 78 10 C50 7 28 12 14 23 C34 25 58 31 80 39 C104 48 130 47 150 46 Z" fillOpacity="0.95" />
@@ -67,8 +73,8 @@ function MantaRay() {
         <path d="M150 46 C140 63 116 77 78 82 C50 85 28 80 14 69 C34 67 58 61 80 53 C104 44 130 45 150 46 Z" fillOpacity="0.95" />
         {/* body + cephalic fins */}
         <path d="M152 46 C147 37 130 31 108 31 C88 31 72 37 64 46 C72 55 88 61 108 61 C130 61 147 55 152 46 Z" />
-        <path d="M148 42 C139 37 128 35 119 38 C130 40 141 41 148 43 Z" fillOpacity="0.8" />
-        <path d="M148 50 C139 55 128 57 119 54 C130 52 141 51 148 49 Z" fillOpacity="0.8" />
+        <path d="M148 42 C139 37 128 35 119 38 C130 40 141 41 148 43 Z" fill="var(--sea-ray-tip)" fillOpacity="0.85" />
+        <path d="M148 50 C139 55 128 57 119 54 C130 52 141 51 148 49 Z" fill="var(--sea-ray-tip)" fillOpacity="0.85" />
       </g>
     </svg>
   );
@@ -78,13 +84,13 @@ function SeaTurtle() {
   return (
     <svg viewBox="0 0 132 92" role="presentation" focusable="false" className="sea-turtle">
       {/* rear flipper */}
-      <path d="M44 53 C36 61 24 70 19 78 C25 81 36 74 43 65 C46 61 46 56 45 53 Z" fillOpacity="0.8" />
+      <path d="M44 53 C36 61 24 70 19 78 C25 81 36 74 43 65 C46 61 46 56 45 53 Z" fill="var(--sea-turtle-fin)" fillOpacity="0.85" />
       {/* front flipper — paddles */}
       <g className="sea-turtle__flipper">
-        <path d="M84 47 C94 48 108 57 113 68 C109 75 96 70 88 59 C84 53 83 49 84 47 Z" fillOpacity="0.8" />
+        <path d="M84 47 C94 48 108 57 113 68 C109 75 96 70 88 59 C84 53 83 49 84 47 Z" fill="var(--sea-turtle-fin)" fillOpacity="0.85" />
       </g>
       {/* tail */}
-      <path d="M30 50 C24 49 17 47 12 44 C18 50 24 53 30 54 Z" fillOpacity="0.7" />
+      <path d="M30 50 C24 49 17 47 12 44 C18 50 24 53 30 54 Z" fill="var(--sea-turtle-fin)" fillOpacity="0.75" />
       {/* carapace */}
       <path d="M26 52 C26 32 42 19 62 19 C82 19 98 32 98 50 C98 56 94 59 88 59 L36 59 C30 59 26 56 26 52 Z" />
       <path d="M62 21 L62 57 M45 23 L49 57 M79 24 L75 57" fill="none" stroke="var(--bg-0)" strokeOpacity="0.22" strokeWidth="1.5" />
@@ -100,7 +106,7 @@ function Jellyfish() {
   return (
     <svg viewBox="0 0 76 96" role="presentation" focusable="false" className="sea-jelly">
       <g className="sea-jelly__tentacles">
-        <g fill="none" stroke="currentColor" strokeLinecap="round" strokeOpacity="0.42">
+        <g fill="none" stroke="var(--sea-jelly-arm)" strokeLinecap="round" strokeOpacity="0.5">
           <path d="M12 38 C9 52 13 66 9 84" strokeWidth="1.1" />
           <path d="M19 40 C16 56 20 70 16 90" strokeWidth="1.1" />
           <path d="M26 41 C24 58 27 72 23 92" strokeWidth="1.1" />
@@ -111,7 +117,7 @@ function Jellyfish() {
           <path d="M64 38 C67 52 64 66 68 84" strokeWidth="1.1" />
         </g>
         {/* four frilly oral arms */}
-        <g fill="none" stroke="currentColor" strokeLinecap="round" strokeOpacity="0.68">
+        <g fill="none" stroke="var(--sea-jelly-arm)" strokeLinecap="round" strokeOpacity="0.78">
           <path d="M22 41 C26 50 20 56 25 64 C29 71 23 76 27 84" strokeWidth="3.2" />
           <path d="M32 42 C36 52 30 58 35 66 C39 73 33 78 37 86" strokeWidth="3.2" />
           <path d="M44 42 C48 52 42 58 47 66 C51 73 45 78 49 86" strokeWidth="3.2" />
@@ -195,7 +201,7 @@ export default function MarineLife() {
       {SWIMMERS.map((fish) => (
         <span
           key={fish.id}
-          className={`sea-item ${fish.flip ? 'sea-item--flip sea-item--rtl' : ''} ${fish.far ? 'sea-item--far' : ''}`}
+          className={`sea-item sea-item--fish ${fish.flip ? 'sea-item--flip sea-item--rtl' : ''} ${fish.far ? 'sea-item--far' : ''}`}
           style={swimmerVars(fish)}
         >
           <span className="sea-item__inner"><ReefFish /></span>
@@ -213,7 +219,7 @@ export default function MarineLife() {
       ))}
 
       {TURTLES.map((turtle) => (
-        <span key={turtle.id} className="sea-item" style={swimmerVars(turtle)}>
+        <span key={turtle.id} className="sea-item sea-item--turtle" style={swimmerVars(turtle)}>
           <span className="sea-item__inner"><SeaTurtle /></span>
         </span>
       ))}

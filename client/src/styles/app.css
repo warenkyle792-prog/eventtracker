@@ -3682,6 +3682,15 @@ a.link:hover, button.link:hover { text-decoration: underline; }
   color: var(--bg-life);
 }
 
+/* One tint per species, each with a lighter second tone on the fins, wing tips,
+   flippers and oral arms. Warm throughout — no blue. */
+.sea-item--fish { color: var(--sea-fish); }
+.sea-item--school { color: var(--sea-school); }
+.sea-item--ray { color: var(--sea-ray); }
+.sea-item--turtle { color: var(--sea-turtle); }
+.sea-item--jelly { color: var(--sea-jelly); }
+.sea-bubble { color: var(--sea-bubble); }
+
 .sea-item {
   position: absolute;
   top: var(--lane, 40%);
@@ -3849,6 +3858,14 @@ a.link:hover, button.link:hover { text-decoration: underline; }
   from { transform: translate3d(-6px, 0, 0); }
   to   { transform: translate3d(6px, 0, 0); }
 }
+
+/* Pale artwork on a near-white page loses its hue, and a black background
+   swallows it; each theme gets just enough lift for the colour to register
+   without ever competing with the text. */
+html[data-theme='light'] .sea-item { opacity: calc(var(--o, 0.12) * 1.2); }
+html[data-theme='light'] .sea-bubble > span { opacity: calc(var(--o, 0.14) * 1.15); }
+html[data-theme='dark'] .sea-item { opacity: calc(var(--o, 0.12) * 1.45); }
+html[data-theme='dark'] .sea-bubble > span { opacity: calc(var(--o, 0.14) * 1.5); }
 
 /* Freeze the whole layer while the tab is hidden. */
 .app-bg.is-paused .app-bg__sea,
