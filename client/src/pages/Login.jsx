@@ -32,8 +32,9 @@ export default function Login() {
     setError('');
     setBusy(true);
     try {
-      const data = await login(form.email.trim(), form.password);
-      toast(`Signed in as ${data.user.name}`, 'success');
+      // `login` resolves with the user, and the context already holds the session.
+      const user = await login(form.email.trim(), form.password);
+      toast(`Signed in as ${user?.name || 'your account'}`, 'success');
       // Straight to the home page after signing in. Only an interrupted
       // attempt at a protected page sends the user back to where they were going.
       navigate(location.state?.from || '/', { replace: true });

@@ -2,7 +2,7 @@
   "name": "eventtracker",
   "version": "1.0.0",
   "private": true,
-  "description": "EventTracker — a modern glassmorphism event discovery and social platform",
+  "description": "EventTracker \u2014 a modern glassmorphism event discovery and social platform",
   "author": "EventTracker",
   "license": "MIT",
   "workspaces": [
@@ -15,7 +15,9 @@
     "build": "npm run build --workspace client",
     "start": "node server/index.js",
     "seed": "node server/seed.js",
-    "reset-db": "node server/seed.js --reset"
+    "reset-db": "node server/seed.js --reset",
+    "test:api": "node scripts/smoke.js",
+    "test:ui": "node scripts/ui-smoke.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
@@ -29,7 +31,8 @@
     "sql.js": "^1.14.2"
   },
   "devDependencies": {
-    "concurrently": "^9.1.0"
+    "concurrently": "^9.1.0",
+    "jsdom": "^30.1.1"
   },
   "engines": {
     "node": ">=18"

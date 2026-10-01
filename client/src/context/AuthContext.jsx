@@ -36,6 +36,7 @@ export function AuthProvider({ children }) {
     };
   }, [refreshUser]);
 
+  /** Resolves with the signed-in user (not the raw { token, user } payload). */
   const login = useCallback(async (email, password) => {
     const data = await api.post('/auth/login', { email, password });
     setToken(data.token);
@@ -43,6 +44,7 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  /** Resolves with the newly registered user. */
   const register = useCallback(async (payload) => {
     const data = await api.post('/auth/register', payload);
     setToken(data.token);

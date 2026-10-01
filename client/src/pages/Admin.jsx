@@ -81,9 +81,37 @@ export default function Admin() {
 
 /* ------------------------------------------------------------------ Overview */
 
+/**
+ * Loading / failure states for the tab queries. A failed request must say so
+ * and offer a retry — never leave the tab spinning forever.
+ */
+function QueryFallback({ loading, error, label, onRetry }) {
+  if (error) {
+    return (
+      <Notice tone="danger" icon={<AlertTriangle size={18} />} title="That didn’t load">
+        <span className="small">
+          {error.status === 401 || error.status === 403
+            ? 'Your session is no longer valid. Sign in again to see these figures.'
+            : error.message || 'The request failed. Check your connection and try again.'}
+        </span>
+        <div className="row row--tight mt-3">
+          <button className="btn btn--secondary btn--sm" onClick={onRetry}><RefreshCw size={14} /> Try again</button>
+          {(error.status === 401 || error.status === 403) && (
+            <Link to="/login" className="btn btn--primary btn--sm">Sign in</Link>
+          )}
+        </div>
+      </Notice>
+    );
+  }
+  if (loading) return <LoadingBlock label={label} />;
+  return null;
+}
+
 function Overview() {
-  const { data, loading, reload } = useAsync(() => api.get('/admin/overview'), []);
-  if (loading || !data) return <LoadingBlock label="Loading platform figures…" />;
+  const { data, loading, error, reload } = useAsync(() => api.get('/admin/overview'), []);
+  if (error || loading || !data) {
+    return <QueryFallback loading={loading} error={error} onRetry={reload} label="Loading platform figures…" />;
+  }
 
   const counts = data.counts;
   const revenue = data.revenue;
@@ -218,13 +246,13 @@ function Overview() {
             <span className="eyebrow">Provider mode</span>
           </div>
           <div className="row row--tight" style={{ flexWrap: 'wrap', gap: 8 }}>
-            {Object.entries(data.providers).map(([provider, mode]) => (
-              <span className="badge" key={provider}>
-                {provider === 'mpesa' ? 'M-Pesa' : provider}: <strong>{mode}</strong>
+            {(data.providers || []).map((provider) => (
+              <span className="badge" key={provider.id}>
+                {provider.label}: <strong>{provider.mode}</strong>
               </span>
             ))}
           </div>
-          {Object.values(data.providers).includes('simulation') && (
+          {(data.providers || []).some((provider) => provider.mode === 'simulation') && (
             <Notice tone="warn" icon={<AlertTriangle size={18} />} title="Sandbox credentials active">
               <span className="small">
                 Live provider keys are not configured, so new payments wait in <code className="mono">pending</code> until
@@ -300,7 +328,7 @@ function Transactions() {
     return params.toString();
   }, [status, method, search]);
 
-  const { data, loading, reload } = useAsync(() => api.get(`/admin/transactions?${query}`), [query]);
+  const { data, loading, error, reload } = useAsync(() => api.get(`/admin/transactions?${query}`), [query]);
 
   const openDetail = async (reference) => {
     try {
@@ -365,7 +393,7 @@ function Transactions() {
         </div>
       )}
 
-      {loading && <LoadingBlock label="Loading transactions…" />}
+      <QueryFallback loading={loading} error={error} onRetry={reload} label="Loading transactions…" />
 
       {!loading && data && (
         <div className="table-wrap mt-5">
@@ -487,7 +515,7 @@ function AdminEvents() {
     return params.toString();
   }, [status, search]);
 
-  const { data, loading, reload } = useAsync(() => api.get(`/admin/events?${query}`), [query]);
+  const { data, loading, error, reload } = useAsync(() => api.get(`/admin/events?${query}`), [query]);
 
   const act = async (path, body, message) => {
     try {
@@ -528,7 +556,7 @@ function AdminEvents() {
         </div>
       </div>
 
-      {loading && <LoadingBlock label="Loading events…" />}
+      <QueryFallback loading={loading} error={error} onRetry={reload} label="Loading events…" />
 
       {!loading && data && (
         <div className="table-wrap mt-5">
@@ -617,7 +645,7 @@ function AdminUsers() {
     return params.toString();
   }, [search, role]);
 
-  const { data, loading, reload } = useAsync(() => api.get(`/admin/users?${query}`), [query]);
+  const { data, loading, error, reload } = useAsync(() => api.get(`/admin/users?${query}`), [query]);
 
   const changeRole = async (target, nextRole) => {
     try {
@@ -647,7 +675,7 @@ function AdminUsers() {
         </div>
       </div>
 
-      {loading && <LoadingBlock label="Loading people…" />}
+      <QueryFallback loading={loading} error={error} onRetry={reload} label="Loading people…" />
 
       {!loading && data && (
         <div className="table-wrap mt-5">
@@ -701,7 +729,7 @@ function AdminPromotions() {
   const { toast } = useToast();
   const [status, setStatus] = useState('');
 
-  const { data, loading, reload } = useAsync(
+  const { data, loading, error, reload } = useAsync(
     () => api.get(`/admin/promotions${status ? `?status=${status}` : ''}`),
     [status]
   );
@@ -738,7 +766,7 @@ function AdminPromotions() {
         </div>
       )}
 
-      {loading && <LoadingBlock label="Loading campaigns…" />}
+      <QueryFallback loading={loading} error={error} onRetry={reload} label="Loading campaigns…" />
 
       {!loading && data && (
         <div className="table-wrap mt-5">
@@ -778,7 +806,7 @@ function AdminPromotions() {
 
 function SettingsPanel() {
   const { toast } = useToast();
-  const { data, loading, reload } = useAsync(() => api.get('/admin/settings'), []);
+  const { data, loading, error, reload } = useAsync(() => api.get('/admin/settings'), []);
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -786,7 +814,9 @@ function SettingsPanel() {
     if (data?.settings) setForm({ ...data.settings });
   }, [data]);
 
-  if (loading || !form) return <LoadingBlock label="Loading settings…" />;
+  if (error || loading || !form) {
+    return <QueryFallback loading={loading} error={error} onRetry={reload} label="Loading settings…" />;
+  }
 
   const save = async () => {
     setBusy(true);
@@ -840,12 +870,17 @@ function SettingsPanel() {
       <div className="panel panel--pad">
         <SectionHead title="Payment providers" sub="Read-only runtime status" />
         <div className="stack">
-          {data.providers && Object.entries(data.providers).map(([provider, mode]) => (
-            <div className="row row--between" key={provider}>
-              <span className="medium" style={{ textTransform: 'capitalize' }}>
-                {provider === 'mpesa' ? 'M-Pesa (Daraja)' : provider}
+          {(data.providers || []).map((provider) => (
+            <div className="row row--between" key={provider.id}>
+              <span className="medium">
+                {provider.label}
+                <div className="tiny dim">
+                  {provider.methods.join(', ')} · {(provider.currencies || []).join(', ')}
+                </div>
               </span>
-              <StatusPill status={mode === 'live' ? 'successful' : 'pending'}>{mode}</StatusPill>
+              <StatusPill status={provider.mode === 'live' ? 'successful' : 'pending'}>
+                {provider.mode}
+              </StatusPill>
             </div>
           ))}
         </div>
@@ -865,7 +900,8 @@ function SettingsPanel() {
 /* ----------------------------------------------------------------- Audit log */
 
 function AuditLog() {
-  const { data, loading } = useAsync(() => api.get('/admin/audit'), []);
+  const { data, loading, error, reload } = useAsync(() => api.get('/admin/audit'), []);
+  if (error) return <QueryFallback error={error} onRetry={reload} label="Loading audit log…" />;
   if (loading) return <LoadingBlock label="Loading audit log…" />;
 
   return (

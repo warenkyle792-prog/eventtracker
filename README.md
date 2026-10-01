@@ -133,6 +133,22 @@ npm start            # API + built client on http://localhost:5000
 
 `npm run reset-db` wipes and re-seeds the database.
 
+### Tests
+
+```bash
+npm run test:api     # 144 API checks against a running server (seeds data, so reset afterwards)
+npm run test:ui      # renders the real React tree in jsdom and drives it
+```
+
+`test:api` covers the endpoints; `test:ui` covers the screens — it signs in
+through the actual login form, checks that a wrong password is refused in place
+and a correct one lands on the home page, then renders the admin dashboard and
+every admin tab against live data. Bugs like a form that threw before it could
+navigate, or a dashboard that crashed rendering an object as a React child, only
+show up in a real render.
+
+Both expect a server on `http://127.0.0.1:5000`; override with `BASE=`.
+
 ### Demo accounts
 
 All accounts use the password `password123`.

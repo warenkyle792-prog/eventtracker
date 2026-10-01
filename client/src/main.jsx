@@ -11,6 +11,19 @@ import { ToastProvider } from './context/ToastContext';
 import './styles/theme.css';
 import './styles/app.css';
 
+/**
+ * A tab left open across a deploy holds the previous asset hashes, so a lazy
+ * route can 404 and leave the Suspense fallback spinning. Reload once to pick
+ * up the current build instead of hanging.
+ */
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault();
+  const key = 'eventtracker_reloaded_for_deploy';
+  if (sessionStorage.getItem(key)) return;
+  sessionStorage.setItem(key, String(Date.now()));
+  window.location.reload();
+});
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
