@@ -150,6 +150,131 @@ function buildLoginHarness(outfile) {
 }
 
 /**
+ * Harness for a browser that refuses storage (private mode, partitioned
+ * storage). Previously the token could not be read back after signing in, so
+ * the app looked signed in while every request went out unauthenticated — the
+ * "Authentication required" loop users hit.
+ */
+function buildBlockedStorageHarness(outfile) {
+  const source = `
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+    import { AuthProvider } from '${ROOT}/client/src/context/AuthContext.jsx';
+    import { ToastProvider } from '${ROOT}/client/src/context/ToastContext.jsx';
+    import { api } from '${ROOT}/client/src/api/client.js';
+    import Login from '${ROOT}/client/src/pages/Login.jsx';
+
+    function Screen() {
+      const location = useLocation();
+      return (
+        <div>
+          <span id="path">{location.pathname}</span>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={<div id="home-marker">HOME PAGE</div>} />
+          </Routes>
+        </div>
+      );
+    }
+
+    window.__mount = () => {
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      window.__last = host;
+      window.__authedCall = () => api.get('/conversations').then(() => 'ok', (e) => e.message);
+      createRoot(host).render(
+        <MemoryRouter initialEntries={['/login']}>
+          <ToastProvider>
+            <AuthProvider>
+              <Screen />
+            </AuthProvider>
+          </ToastProvider>
+        </MemoryRouter>
+      );
+    };
+  `;
+
+  esbuild.buildSync({
+    stdin: { contents: source, resolveDir: ROOT, loader: 'jsx' },
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    jsx: 'automatic',
+    target: 'es2020',
+    define: { 'process.env.NODE_ENV': '"development"', 'import.meta.env': '"production"' },
+    loader: { '.css': 'empty' },
+    logLevel: 'error',
+    outfile,
+  });
+}
+
+/**
+ * Harness for Chat with a session that dies mid-use — the reported bug was a
+ * raw "Authentication required" every time the user touched chat, because the
+ * app still believed it was signed in after its token had gone.
+ */
+function buildChatHarness(outfile, token) {
+  const source = `
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { MemoryRouter, Route, Routes } from 'react-router-dom';
+    import { AuthProvider } from '${ROOT}/client/src/context/AuthContext.jsx';
+    import { ToastProvider } from '${ROOT}/client/src/context/ToastContext.jsx';
+    import { api, setToken } from '${ROOT}/client/src/api/client.js';
+    import Chat from '${ROOT}/client/src/pages/Chat.jsx';
+
+    const TOKEN = ${JSON.stringify(token)};
+
+    window.__mount = () => {
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      window.__last = host;
+      window.localStorage.setItem('eventtracker_token', TOKEN);
+
+      // what another tab signing out (or evicted storage) looks like from here
+      window.__killSession = () => {
+        try { window.localStorage.removeItem('eventtracker_token'); } catch (_) {}
+        try { window.sessionStorage.removeItem('eventtracker_token'); } catch (_) {}
+      };
+      // an action that needs the session, exactly like sending a message does
+      window.__authedCall = () => api.get('/conversations').then(() => 'ok', (e) => e.message);
+      window.__signIn = async () => {
+        const res = await api.post('/auth/login', { email: 'njeri@eventtracker.app', password: 'password123' });
+        setToken(res.token);
+        return res.user.name;
+      };
+
+      createRoot(host).render(
+        <MemoryRouter initialEntries={['/chat']}>
+          <ToastProvider>
+            <AuthProvider>
+              <Routes>
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/login" element={<div id="login-marker">LOGIN PAGE</div>} />
+              </Routes>
+            </AuthProvider>
+          </ToastProvider>
+        </MemoryRouter>
+      );
+    };
+  `;
+
+  esbuild.buildSync({
+    stdin: { contents: source, resolveDir: ROOT, loader: 'jsx' },
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    jsx: 'automatic',
+    target: 'es2020',
+    define: { 'process.env.NODE_ENV': '"development"', 'import.meta.env': '"production"' },
+    loader: { '.css': 'empty' },
+    logLevel: 'error',
+    outfile,
+  });
+}
+
+/**
  * Harness for the ambient background: the galaxy plus every layer behind the
  * content, so the whole stack is covered by the same test as the screens.
  */
@@ -434,6 +559,91 @@ async function runQuickView(tmp) {
   check('links inside the card are left alone', !host.querySelector('.quick-view__panel'));
 }
 
+async function runChatSession(tmp) {
+  console.log('\nChat with a session that dies');
+
+  // a demo account that actually has conversations to load first
+  const session = await fetch(`${BASE}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'njeri@eventtracker.app', password: 'password123' }),
+  }).then((r) => r.json());
+
+  const bundle = path.join(tmp, 'chat.js');
+  buildChatHarness(bundle, session.token);
+
+  const { window, problems } = makeDom(bundle, `${BASE}/chat`);
+  window.__mount();
+  await wait(1500);
+
+  const host = window.__last;
+  const text = () => host.textContent || '';
+  const listItems = host.querySelectorAll('.chat__list .conv');
+
+  check('signed-in chat loads the conversation list', listItems.length > 0, `${listItems.length} entries`);
+  check('a healthy session never shows the auth error', !/Authentication required/.test(text()));
+
+  // the session disappears underneath the running app
+  window.__killSession();
+  const message = await window.__authedCall();
+  await wait(300);
+
+  check('the dead session ends with one clear message, not the raw server string',
+    message.includes('session has ended') && !message.includes('Authentication required'), message);
+
+  const toasts = host.querySelectorAll('.toast');
+  check('the user is told once', toasts.length === 1, `${toasts.length} toasts`);
+  check('the notice is a session notice', /session ended/i.test(toasts[0]?.textContent || ''));
+  check('chat falls back to its sign-in gate', /session ended|sign in/i.test(text()));
+  check('no raw auth error anywhere on screen', !/Authentication required/.test(text()));
+  check('the gate offers a way back in', Boolean(host.querySelector('.chat ~ * a[href="/login"], a[href="/login"]')));
+  check('no render errors on the way out', problems.length === 0, problems.slice(0, 1).join(' | '));
+
+  // a second failing call must not stack up more notices
+  await window.__authedCall();
+  await wait(200);
+  check('repeated attempts do not repeat the notice', host.querySelectorAll('.toast').length === 1);
+
+  // signing in again restores the account (the gate itself clears on next mount)
+  const name = await window.__signIn();
+  check('signing in again works from the same page', name === 'Njeri Karanja', String(name));
+}
+
+async function runStorageBlockedLogin(tmp) {
+  console.log('\nSigning in when storage is blocked');
+  const bundle = path.join(tmp, 'blocked.js');
+  buildBlockedStorageHarness(bundle);
+
+  const { window, problems } = makeDom(bundle, `${BASE}/login`);
+  // private mode / partitioned storage: touching it throws
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    get() { throw new Error('storage is blocked'); },
+  });
+  Object.defineProperty(window, 'sessionStorage', {
+    configurable: true,
+    get() { throw new Error('storage is blocked'); },
+  });
+
+  window.__mount();
+  await wait(600);
+
+  const inputs = window.__last.querySelectorAll('input');
+  check('login form renders without storage', inputs.length >= 2, `${inputs.length} inputs`);
+  type(window, inputs[0], 'njeri@eventtracker.app');
+  type(window, inputs[1], 'password123');
+  window.__last.querySelector('form').dispatchEvent(
+    new window.Event('submit', { bubbles: true, cancelable: true })
+  );
+  await wait(1200);
+
+  check('signing in still reaches the home page', /HOME PAGE/.test(window.__last.textContent || ''));
+  const call = await window.__authedCall();
+  check('requests after signing in carry the session', call === 'ok', String(call));
+  check('no auth error is shown', !/Authentication required/.test(window.__last.textContent || ''));
+  check('no storage errors leak to the console', problems.length === 0, problems.slice(0, 1).join(' | '));
+}
+
 /* ------------------------------------------------------------------ main */
 
 (async () => {
@@ -463,6 +673,8 @@ async function runQuickView(tmp) {
     await runAdminTabs(tmp, login.token || token);
     await runBackground(tmp);
     await runQuickView(tmp);
+    await runChatSession(tmp);
+    await runStorageBlockedLogin(tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

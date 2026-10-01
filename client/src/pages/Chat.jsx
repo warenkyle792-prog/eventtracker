@@ -15,7 +15,7 @@ import { relativeDay, timeAgo } from '../utils/format';
 export default function Chat() {
   useDocumentTitle('Messages');
 
-  const { user } = useAuth();
+  const { user, sessionExpired } = useAuth();
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [params, setParams] = useSearchParams();
@@ -80,7 +80,8 @@ export default function Chat() {
       setConversations(data.conversations || []);
       return data.conversations || [];
     } catch (error) {
-      toast(error.message, 'error');
+      // Session expiry is announced once by the toast layer; nothing to add here.
+      if (error.status !== 401) toast(error.message, 'error');
       return [];
     } finally {
       setLoading(false);
@@ -201,9 +202,11 @@ export default function Chat() {
         <div className="container">
           <EmptyState
             icon={<MessagesSquare size={22} />}
-            title="Sign in to see your messages"
-            text="Talk to organisers about events or join an event group chat."
-            action={<Link to="/login" className="btn btn--primary">Sign in</Link>}
+            title={sessionExpired ? 'Your session ended' : 'Sign in to see your messages'}
+            text={sessionExpired
+              ? 'You were signed out, so your conversations are hidden. Sign in again and you will come straight back here.'
+              : 'Talk to organisers about events or join an event group chat.'}
+            action={<Link to="/login" state={{ from: '/chat' }} className="btn btn--primary">Sign in</Link>}
           />
         </div>
       </div>

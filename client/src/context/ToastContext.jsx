@@ -1,5 +1,7 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Info, X } from 'lucide-react';
+
+import { SESSION_ENDED_MESSAGE, onUnauthorized } from '../api/client';
 
 const ToastContext = createContext(null);
 
@@ -16,12 +18,25 @@ export function ToastProvider({ children }) {
     setToasts((current) => current.filter((t) => t.id !== id));
   }, []);
 
+  // One session notice stands in for every request that 401s at the same moment.
+  const lastExpiryNotice = useRef(0);
+
   const toast = useCallback((message, type = 'info', title = '') => {
+    if (message === SESSION_ENDED_MESSAGE && Date.now() - lastExpiryNotice.current < 8000) {
+      return null;
+    }
     const id = `${Date.now()}-${Math.random().toString(16).slice(2, 6)}`;
     setToasts((current) => [...current.slice(-3), { id, message, type, title }]);
     setTimeout(() => dismiss(id), type === 'error' ? 7000 : 4500);
     return id;
   }, [dismiss]);
+
+  useEffect(() => onUnauthorized(() => {
+    const now = Date.now();
+    if (now - lastExpiryNotice.current < 8000) return;
+    lastExpiryNotice.current = now;
+    toast('Your session ended. Sign in again to keep going.', 'error', 'Signed out');
+  }), [toast]);
 
   const value = useMemo(() => ({ toast, dismiss, toasts }), [toast, dismiss, toasts]);
 

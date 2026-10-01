@@ -4,20 +4,83 @@
 
 const TOKEN_KEY = 'eventtracker_token';
 
-export function getToken() {
+/**
+ * Token storage with fallbacks.
+ *
+ * localStorage is the right home for a session, but it can be blocked
+ * (private mode, partitioned iframes) or evicted underneath a running tab.
+ * Falling back to sessionStorage and then to memory keeps a signed-in tab
+ * usable, instead of leaving the app convinced it is authenticated while every
+ * request goes out without a token.
+ */
+const memoryToken = { value: null };
+
+function safeStorage(kind) {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const store = window[kind];
+    const probe = '__eventtracker_probe__';
+    store.setItem(probe, '1');
+    store.removeItem(probe);
+    return store;
   } catch {
     return null;
   }
 }
 
+export function getToken() {
+  for (const kind of ['localStorage', 'sessionStorage']) {
+    try {
+      const value = window[kind].getItem(TOKEN_KEY);
+      if (value) return value;
+    } catch {
+      /* try the next store */
+    }
+  }
+  return memoryToken.value;
+}
+
 export function setToken(token) {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* storage unavailable (private mode) — sessions simply won't persist */
+  memoryToken.value = token || null;
+
+  for (const kind of ['localStorage', 'sessionStorage']) {
+    const store = safeStorage(kind);
+    if (!store) continue;
+    try {
+      if (token) store.setItem(TOKEN_KEY, token);
+      else store.removeItem(TOKEN_KEY);
+    } catch {
+      /* keep going — another store may accept it */
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Session expiry
+ *
+ * Any 401 means the session is gone, however it happened: another tab
+ * signed out, storage was cleared, or the token expired. Listeners clear the
+ * session and tell the user once, so a protected screen shows its sign-in
+ * prompt instead of repeating a raw server message on every attempt.
+ * ------------------------------------------------------------------ */
+
+const unauthorizedListeners = new Set();
+
+/** Shown when a request is rejected for a missing or expired session. */
+export const SESSION_ENDED_MESSAGE = 'Your session has ended — sign in again to continue.';
+
+/** Subscribe to 401s. Returns an unsubscribe function. */
+export function onUnauthorized(listener) {
+  unauthorizedListeners.add(listener);
+  return () => unauthorizedListeners.delete(listener);
+}
+
+function reportUnauthorized() {
+  for (const listener of unauthorizedListeners) {
+    try {
+      listener();
+    } catch {
+      /* a failing listener must not break the request */
+    }
   }
 }
 
@@ -59,6 +122,13 @@ async function request(path, { method = 'GET', body, formData, auth = true, sign
   }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      // Drop the dead session everywhere before surfacing the failure.
+      setToken(null);
+      reportUnauthorized();
+      throw new ApiError(SESSION_ENDED_MESSAGE, 401, data);
+    }
+
     throw new ApiError(
       data?.error || `Request failed (${res.status})`,
       res.status,
