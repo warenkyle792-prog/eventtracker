@@ -1,378 +1,527 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import {
-  MessageCircle, Send, ArrowLeft, Search, Plus, Users, CalendarDays,
+  ArrowLeft, CalendarDays, MessageSquarePlus, MessagesSquare, Search, Send, Users,
 } from 'lucide-react';
+
+import { Avatar, EmptyState, LoadingBlock, Modal } from '../components/UI';
 import { api, getToken } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { Avatar, EmptyState, Modal, Spinner } from '../components/UI';
-import { timeLabel, formatDate, parseDate } from '../utils/format';
+import { useDocumentTitle, useIsMobile, useScrollLock } from '../hooks';
+import { relativeDay, timeAgo } from '../utils/format';
 
 export default function Chat() {
-  const { user, loading: authLoading } = useAuth();
-  const navigate = useNavigate();
+  useDocumentTitle('Messages');
+
+  const { user } = useAuth();
   const { toast } = useToast();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const isMobile = useIsMobile();
+  const [params, setParams] = useSearchParams();
 
   const [conversations, setConversations] = useState([]);
-  const [activeId, setActiveId] = useState(Number(searchParams.get('c')) || null);
+  const [loading, setLoading] = useState(true);
+  const [activeId, setActiveId] = useState(Number(params.get('c')) || null);
   const [messages, setMessages] = useState([]);
-  const [text, setText] = useState('');
-  const [loadingList, setLoadingList] = useState(true);
-  const [loadingMsgs, setLoadingMsgs] = useState(false);
-  const [typingUsers, setTypingUsers] = useState({});
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [typing, setTyping] = useState(null);
+  const [online, setOnline] = useState({});
   const [newOpen, setNewOpen] = useState(false);
-  const [people, setPeople] = useState([]);
-  const [peopleQuery, setPeopleQuery] = useState('');
-  const [threadOpenMobile, setThreadOpenMobile] = useState(Boolean(activeId));
+  const [query, setQuery] = useState('');
 
   const socketRef = useRef(null);
-  const bottomRef = useRef(null);
-  const typingTimer = useRef(null);
+  const scrollRef = useRef(null);
 
+  /* ------------------------------------------------------------ socket */
   useEffect(() => {
-    if (!authLoading && !user) navigate('/login');
-  }, [user, authLoading, navigate]);
+    const token = getToken();
+    if (!token || !user) return undefined;
 
-  /* -------- socket connection -------- */
-  useEffect(() => {
-    if (!user) return;
-    const socket = io({
-      auth: { token: getToken() },
-      transports: ['websocket', 'polling'],
-    });
+    const socket = io({ auth: { token }, transports: ['websocket', 'polling'] });
     socketRef.current = socket;
 
     socket.on('message:new', ({ conversationId, message }) => {
-      if (conversationId === activeId) {
-        setMessages((m) => (m.some((x) => x.id === message.id) ? m : [...m, message]));
+      if (conversationId === activeIdRef.current) {
+        setMessages((current) => (current.some((m) => m.id === message.id) ? current : [...current, message]));
       }
-      setConversations((list) =>
-        list.map((c) =>
-          c.id === conversationId
-            ? { ...c, last_message: message }
-            : c
-        )
-      );
+      setConversations((current) => current.map((conversation) => (
+        conversation.id === conversationId
+          ? { ...conversation, last_message: message }
+          : conversation
+      )));
     });
 
     socket.on('typing:start', ({ conversationId, userId }) => {
-      if (conversationId === activeId) {
-        setTypingUsers((t) => ({ ...t, [userId]: true }));
-      }
+      if (conversationId === activeIdRef.current && userId !== user.id) setTyping(userId);
     });
-    socket.on('typing:stop', ({ conversationId, userId }) => {
-      setTypingUsers((t) => {
-        const copy = { ...t };
-        delete copy[userId];
-        return copy;
-      });
+    socket.on('typing:stop', ({ conversationId }) => {
+      if (conversationId === activeIdRef.current) setTyping(null);
+    });
+    socket.on('presence:update', ({ userId, online: isOnline }) => {
+      setOnline((current) => ({ ...current, [userId]: isOnline }));
     });
 
     return () => {
+      socket.removeAllListeners();
       socket.disconnect();
       socketRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
+  }, [user?.id]);
 
-  /* -------- load conversation list -------- */
-  const loadList = useCallback(async () => {
+  const activeIdRef = useRef(activeId);
+  useEffect(() => { activeIdRef.current = activeId; }, [activeId]);
+
+  /* --------------------------------------------------------- data load */
+  const loadConversations = useCallback(async () => {
     try {
-      const d = await api.get('/conversations');
-      setConversations(d.conversations);
-    } catch (err) {
-      toast(err.message, 'error');
+      const data = await api.get('/conversations');
+      setConversations(data.conversations || []);
+      return data.conversations || [];
+    } catch (error) {
+      toast(error.message, 'error');
+      return [];
     } finally {
-      setLoadingList(false);
+      setLoading(false);
     }
   }, [toast]);
 
   useEffect(() => {
-    if (user) loadList();
-  }, [user, loadList]);
+    if (user) loadConversations();
+  }, [user, loadConversations]);
 
-  /* -------- load messages when active changes -------- */
+  /* Open a DM when arriving with ?to=username */
   useEffect(() => {
-    if (!activeId) return;
-    setLoadingMsgs(true);
+    const to = params.get('to');
+    if (!to || !user) return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { users } = await api.get(`/users?q=${encodeURIComponent(to)}`);
+        const target = users.find((candidate) => candidate.username === to) || users[0];
+        if (!target || cancelled) return;
+        const { conversation } = await api.post('/conversations', { participantId: target.id });
+        if (cancelled) return;
+        await loadConversations();
+        setActiveId(conversation.id);
+        setParams({ c: String(conversation.id) }, { replace: true });
+      } catch (error) {
+        if (!cancelled) toast(error.message, 'error');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [params, user, loadConversations, setParams, toast]);
+
+  useEffect(() => {
+    if (!activeId) return undefined;
+    let cancelled = false;
+
+    setMessagesLoading(true);
     socketRef.current?.emit('conversation:join', activeId);
+
     api.get(`/conversations/${activeId}/messages`)
-      .then((d) => setMessages(d.messages))
-      .catch((err) => toast(err.message, 'error'))
-      .finally(() => setLoadingMsgs(false));
+      .then((data) => { if (!cancelled) setMessages(data.messages || []); })
+      .catch((error) => { if (!cancelled) toast(error.message, 'error'); })
+      .finally(() => { if (!cancelled) setMessagesLoading(false); });
 
-    const next = new URLSearchParams(searchParams);
-    next.set('c', String(activeId));
-    setSearchParams(next, { replace: true });
-    setThreadOpenMobile(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId]);
+    return () => {
+      socketRef.current?.emit('conversation:leave', activeId);
+      if (!cancelled) { /* keep the list warm */ }
+    };
+  }, [activeId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep the newest message in view.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, typingUsers]);
+    const node = scrollRef.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [messages, typing, activeId]);
 
-  /* -------- search people for new DM -------- */
-  useEffect(() => {
-    if (!newOpen) return;
-    const t = setTimeout(() => {
-      api.get(`/users?q=${encodeURIComponent(peopleQuery)}`)
-        .then((d) => setPeople(d.users || []))
-        .catch(() => setPeople([]));
-    }, 250);
-    return () => clearTimeout(t);
-  }, [newOpen, peopleQuery]);
+  const active = useMemo(
+    () => conversations.find((conversation) => conversation.id === activeId) || null,
+    [conversations, activeId]
+  );
 
-  const activeConv = conversations.find((c) => c.id === activeId);
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return conversations;
+    return conversations.filter((conversation) => {
+      const haystack = [
+        conversation.title,
+        conversation.participants?.map((p) => `${p.name} ${p.username}`).join(' '),
+        conversation.last_message?.body,
+      ].join(' ').toLowerCase();
+      return haystack.includes(needle);
+    });
+  }, [conversations, query]);
+
+  const send = async (event) => {
+    event?.preventDefault();
+    const body = draft.trim();
+    if (!body || !activeId) return;
+    setDraft('');
+    socketRef.current?.emit('typing:stop', { conversationId: activeId });
+
+    // Optimistic bubble, reconciled when the server echoes the message back.
+    const optimistic = {
+      id: `tmp-${Date.now()}`,
+      conversation_id: activeId,
+      sender_id: user.id,
+      body,
+      created_at: new Date().toISOString(),
+      name: user.name,
+      username: user.username,
+      avatar_url: user.avatar_url,
+      pending: true,
+    };
+    setMessages((current) => [...current, optimistic]);
+
+    try {
+      const { message } = await api.post(`/conversations/${activeId}/messages`, { body });
+      setMessages((current) => current.map((m) => (m.id === optimistic.id ? message : m)));
+      setConversations((current) => current.map((conversation) => (
+        conversation.id === activeId ? { ...conversation, last_message: message } : conversation
+      )));
+    } catch (error) {
+      setMessages((current) => current.filter((m) => m.id !== optimistic.id));
+      toast(error.message, 'error');
+    }
+  };
 
   const openConversation = (id) => {
-    if (socketRef.current && activeId) socketRef.current.emit('conversation:leave', activeId);
     setActiveId(id);
+    setParams({ c: String(id) }, { replace: true });
   };
 
-  const startDm = async (person) => {
-    try {
-      const res = await api.post('/conversations', { participantId: person.id });
-      setNewOpen(false);
-      setPeopleQuery('');
-      await loadList();
-      openConversation(res.conversation.id);
-    } catch (err) {
-      toast(err.message, 'error');
-    }
-  };
+  if (!user) {
+    return (
+      <div className="page">
+        <div className="container">
+          <EmptyState
+            icon={<MessagesSquare size={22} />}
+            title="Sign in to see your messages"
+            text="Talk to organisers about events or join an event group chat."
+            action={<Link to="/login" className="btn btn--primary">Sign in</Link>}
+          />
+        </div>
+      </div>
+    );
+  }
 
-  const send = (e) => {
-    e.preventDefault();
-    const body = text.trim();
-    if (!body || !activeId) return;
-    const socket = socketRef.current;
-    if (socket?.connected) {
-      socket.emit('message:send', { conversationId: activeId, body }, (res) => {
-        if (res?.message) {
-          setMessages((m) => (m.some((x) => x.id === res.message.id) ? m : [...m, res.message]));
-        }
-      });
-    } else {
-      // REST fallback
-      api.post(`/conversations/${activeId}/messages`, { body })
-        .then((res) => setMessages((m) => [...m, res.message]))
-        .catch((err) => toast(err.message, 'error'));
-    }
-    setText('');
-    socketRef.current?.emit('typing:stop', { conversationId: activeId });
-  };
-
-  const onType = (e) => {
-    setText(e.target.value);
-    const socket = socketRef.current;
-    if (!socket || !activeId) return;
-    socket.emit('typing:start', { conversationId: activeId });
-    clearTimeout(typingTimer.current);
-    typingTimer.current = setTimeout(() => {
-      socket.emit('typing:stop', { conversationId: activeId });
-    }, 1800);
-  };
-
-  const convTitle = (c) => {
-    if (!c) return '';
-    if (c.type === 'event') return c.title || 'Event chat';
-    return c.participants?.map((p) => p.name).join(', ') || 'Conversation';
-  };
-
-  const typingLabel = Object.keys(typingUsers).length > 0
-    ? `${Object.keys(typingUsers).length === 1 ? 'Someone is' : 'People are'} typing…`
-    : null;
-
-  if (authLoading) return <div className="page"><Spinner /></div>;
+  const showList = !isMobile || !activeId;
+  const showThread = !isMobile || activeId;
 
   return (
-    <div className="page" style={{ paddingTop: 'calc(var(--nav-h) + var(--s-6))', paddingBottom: 'var(--s-8)' }}>
+    <div className="page">
       <div className="container">
-        <div className={`chat-shell ${threadOpenMobile ? 'mobile-thread-open' : ''}`}>
-          {/* ---------- Conversation list ---------- */}
-          <aside className="chat-list glass">
-            <div className="chat-list-head">
-              <h2>Messages</h2>
-              <button className="btn btn-primary btn-sm" onClick={() => setNewOpen(true)}>
-                <Plus size={16} /> New
-              </button>
-            </div>
-            <div style={{ padding: 'var(--s-3) var(--s-4) 0' }}>
-              <div className="input-with-icon">
-                <span className="ii-icon"><Search size={15} /></span>
-                <input className="input" placeholder="Search chats…" aria-label="Search conversations" />
-              </div>
-            </div>
-            <div className="chat-scroll">
-              {loadingList ? (
-                <Spinner label="Loading chats…" />
-              ) : conversations.length === 0 ? (
-                <EmptyState
-                  icon={<MessageCircle size={28} />}
-                  title="No conversations yet"
-                  text="Start a chat from an event page or a host’s profile."
-                />
-              ) : (
-                conversations.map((c) => (
-                  <button
-                    key={c.id}
-                    className={`conv-item ${c.id === activeId ? 'active' : ''}`}
-                    onClick={() => openConversation(c.id)}
-                  >
-                    {c.type === 'event' ? (
-                      <span className="meta-icon" style={{ width: 42, height: 42 }}>
-                        <CalendarDays size={18} />
-                      </span>
-                    ) : (
-                      <Avatar user={c.participants?.[0]} />
-                    )}
-                    <span className="info">
-                      <span className="title">{convTitle(c)}</span>
-                      <span className="preview">
-                        {c.last_message
-                          ? `${c.last_message.sender_id === user?.id ? 'You: ' : ''}${c.last_message.body}`
-                          : 'No messages yet'}
-                      </span>
-                    </span>
-                    {c.last_message && (
-                      <span className="time">{timeLabel(c.last_message.created_at)}</span>
-                    )}
-                  </button>
-                ))
-              )}
-            </div>
-          </aside>
+        <div className="page-head">
+          <div>
+            <h1>Messages</h1>
+            <p>Direct messages with organisers and group chats for the events you follow.</p>
+          </div>
+          <button className="btn btn--primary" onClick={() => setNewOpen(true)}>
+            <MessageSquarePlus size={16} /> New message
+          </button>
+        </div>
 
-          {/* ---------- Thread ---------- */}
-          <section className="chat-thread glass">
-            {!activeConv ? (
-              <div className="chat-empty">
-                <MessageCircle size={44} />
-                <h3 style={{ color: 'var(--text-0)' }}>Your conversations live here</h3>
-                <p style={{ maxWidth: 320, lineHeight: 1.7 }}>
-                  Pick a chat from the list, or start a new one to connect with hosts and fellow event-goers.
-                </p>
-                <button className="btn btn-primary" onClick={() => setNewOpen(true)}>
-                  <Plus size={16} /> Start a conversation
-                </button>
+        <div className="chat">
+          {showList && (
+            <aside className="chat__sidebar">
+              <div className="chat__sidebar-head">
+                <span className="input-icon flex-1">
+                  <Search size={15} />
+                  <input
+                    className="input"
+                    placeholder="Search conversations"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    aria-label="Search conversations"
+                  />
+                </span>
               </div>
-            ) : (
-              <>
-                <div className="chat-thread-head">
-                  <button
-                    className="btn btn-icon btn-sm btn-ghost desktop-hidden"
-                    onClick={() => setThreadOpenMobile(false)}
-                    aria-label="Back to chats"
-                  >
-                    <ArrowLeft size={17} />
-                  </button>
-                  {activeConv.type === 'event' ? (
-                    <span className="meta-icon"><Users size={18} /></span>
-                  ) : (
-                    <Avatar user={activeConv.participants?.[0]} />
-                  )}
-                  <div>
-                    <div className="title">{convTitle(activeConv)}</div>
-                    <div className="status">
-                      <span className="presence-dot" /> Active now
-                      {activeConv.type === 'event' && (
-                        <Link to={`/events/${activeConv.event_id}`} className="flex" style={{ gap: 4, marginLeft: 8, color: 'var(--accent-2)' }}>
-                          <CalendarDays size={12} /> View event
-                        </Link>
+
+              <div className="chat__list">
+                {loading && <LoadingBlock label="Loading…" />}
+
+                {!loading && filtered.length === 0 && (
+                  <p className="muted small" style={{ padding: 'var(--s-4)' }}>
+                    {conversations.length === 0
+                      ? 'No conversations yet. Message an organiser from any event page.'
+                      : 'Nothing matches that search.'}
+                  </p>
+                )}
+
+                {filtered.map((conversation) => {
+                  const other = conversation.participants?.[0];
+                  const title = conversation.type === 'event'
+                    ? conversation.title
+                    : (other?.name || 'Conversation');
+                  return (
+                    <button
+                      key={conversation.id}
+                      className={`conv ${conversation.id === activeId ? 'is-active' : ''}`}
+                      onClick={() => openConversation(conversation.id)}
+                    >
+                      {conversation.type === 'event' ? (
+                        <span className="avatar avatar--md" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft)', color: 'var(--brand)', borderColor: 'transparent' }}>
+                          <CalendarDays size={16} />
+                        </span>
+                      ) : (
+                        <Avatar user={other} />
                       )}
-                    </div>
-                  </div>
-                </div>
 
-                <div className="chat-messages">
-                  {loadingMsgs ? (
-                    <Spinner label="Loading messages…" />
-                  ) : (
-                    <>
-                      {messages.map((m, i) => {
-                        const mine = m.sender_id === user?.id;
-                        const prev = messages[i - 1];
-                        const newDay = !prev || parseDate(prev.created_at)?.toDateString() !== parseDate(m.created_at)?.toDateString();
-                        return (
-                          <div key={m.id} style={{ display: 'contents' }}>
-                            {newDay && (
-                              <span className="date-divider">{formatDate(m.created_at, { year: true })}</span>
-                            )}
-                            <div className={`msg-row ${mine ? 'mine' : 'theirs'}`}>
-                              {!mine && <Avatar user={{ name: m.name, avatar_url: m.avatar_url }} size="sm" />}
-                              <div>
-                                {!mine && activeConv.type === 'event' && (
-                                  <div className="msg-sender">{m.name}</div>
-                                )}
-                                <div className="msg-bubble">{m.body}</div>
-                                <div className="msg-time">{timeLabel(m.created_at)}</div>
+                      <span className="conv__info">
+                        <span className="conv__title">{title}</span>
+                        <span className="conv__preview">
+                          {conversation.last_message
+                            ? `${conversation.last_message.sender_id === user.id ? 'You: ' : ''}${conversation.last_message.body}`
+                            : 'No messages yet'}
+                        </span>
+                      </span>
+
+                      {conversation.last_message && (
+                        <span className="conv__time">{timeAgo(conversation.last_message.created_at)}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+          )}
+
+          {showThread && (
+            <section className="chat__main">
+              {!active ? (
+                <div className="chat__empty">
+                  <MessagesSquare size={26} />
+                  <div>
+                    <strong>No conversation selected</strong>
+                    <p className="small muted">Pick a thread on the left, or start a new message.</p>
+                  </div>
+                  <button className="btn btn--secondary btn--sm" onClick={() => setNewOpen(true)}>
+                    <MessageSquarePlus size={15} /> New message
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <header className="chat__head">
+                    {isMobile && (
+                      <button className="btn btn--ghost btn--sm" onClick={() => setActiveId(null)} aria-label="Back to conversations">
+                        <ArrowLeft size={16} />
+                      </button>
+                    )}
+
+                    {active.type === 'event' ? (
+                      <>
+                        <span className="avatar avatar--md" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft)', color: 'var(--brand)', borderColor: 'transparent' }}>
+                          <CalendarDays size={16} />
+                        </span>
+                        <div className="flex-1" style={{ minWidth: 0 }}>
+                          <div className="chat__head-title truncate">{active.title}</div>
+                          <div className="chat__head-sub"><Users size={13} /> Event group chat</div>
+                        </div>
+                        <Link to={`/events/${active.event_id}`} className="btn btn--secondary btn--sm">Open event</Link>
+                      </>
+                    ) : (
+                      <>
+                        <Avatar user={active.participants?.[0]} />
+                        <div className="flex-1" style={{ minWidth: 0 }}>
+                          <div className="chat__head-title truncate">{active.participants?.[0]?.name}</div>
+                          <div className="chat__head-sub">
+                            <span className={`presence ${online[active.participants?.[0]?.id] === false ? 'is-offline' : ''}`} />
+                            {online[active.participants?.[0]?.id] === false ? 'Offline' : 'Active now'}
+                          </div>
+                        </div>
+                        <Link to={`/u/${active.participants?.[0]?.username}`} className="btn btn--secondary btn--sm">Profile</Link>
+                      </>
+                    )}
+                  </header>
+
+                  <div className="chat__scroll" ref={scrollRef}>
+                    {messagesLoading && <LoadingBlock label="Loading messages…" />}
+
+                    {!messagesLoading && messages.length === 0 && (
+                      <div className="chat__empty" style={{ padding: 0 }}>
+                        <p className="small muted">
+                          {active.type === 'event'
+                            ? 'This is the start of the event group chat. Say hello to everyone going.'
+                            : `Say hello to ${active.participants?.[0]?.name}.`}
+                        </p>
+                      </div>
+                    )}
+
+                    {messages.map((message, index) => {
+                      const mine = message.sender_id === user.id;
+                      const previous = messages[index - 1];
+                      const showDay = !previous || dayKey(previous.created_at) !== dayKey(message.created_at);
+
+                      return (
+                        <div key={message.id}>
+                          {showDay && <div className="day-divider">{relativeDay(message.created_at)}</div>}
+                          <div className={`msg ${mine ? 'msg--mine' : ''}`} style={{ marginLeft: mine ? 'auto' : 0, opacity: message.pending ? 0.6 : 1 }}>
+                            {!mine && <Avatar user={{ name: message.name, avatar_url: message.avatar_url }} size="sm" />}
+                            <div>
+                              <div className="msg__bubble">{message.body}</div>
+                              <div className="msg__meta" style={{ textAlign: mine ? 'right' : 'left' }}>
+                                {message.pending ? 'Sending…' : timeAgo(message.created_at)}
                               </div>
                             </div>
                           </div>
-                        );
-                      })}
-                      {typingLabel && (
-                        <div className="typing-row" title={typingLabel}>
-                          <i /><i /><i />
                         </div>
-                      )}
-                      <div ref={bottomRef} />
-                    </>
-                  )}
-                </div>
+                      );
+                    })}
 
-                <form className="chat-input-row" onSubmit={send}>
-                  <input
-                    className="input"
-                    placeholder="Write a message…"
-                    value={text}
-                    onChange={onType}
-                    aria-label="Message text"
-                  />
-                  <button className="btn btn-primary btn-icon" type="submit" disabled={!text.trim()} aria-label="Send message">
-                    <Send size={18} />
-                  </button>
-                </form>
-              </>
-            )}
-          </section>
+                    {typing && <span className="small muted">typing…</span>}
+                  </div>
+
+                  <form className="chat__composer" onSubmit={send}>
+                    <textarea
+                      className="textarea flex-1"
+                      rows={1}
+                      placeholder="Write a message…"
+                      value={draft}
+                      onChange={(event) => {
+                        setDraft(event.target.value);
+                        socketRef.current?.emit('typing:start', { conversationId: activeId });
+                      }}
+                      onBlur={() => socketRef.current?.emit('typing:stop', { conversationId: activeId })}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' && !event.shiftKey) {
+                          event.preventDefault();
+                          send(event);
+                        }
+                      }}
+                    />
+                    <button className="btn btn--primary" disabled={!draft.trim()}>
+                      <Send size={16} /> Send
+                    </button>
+                  </form>
+                </>
+              )}
+            </section>
+          )}
         </div>
       </div>
 
-      {/* New conversation modal */}
-      <Modal open={newOpen} onClose={() => setNewOpen(false)} title="New conversation">
-        <div className="input-with-icon mb-4">
-          <span className="ii-icon"><Search size={16} /></span>
-          <input
-            className="input"
-            placeholder="Search people by name or username…"
-            value={peopleQuery}
-            onChange={(e) => setPeopleQuery(e.target.value)}
-            autoFocus
-          />
-        </div>
-        <div className="flex-col" style={{ gap: 6, maxHeight: 320, overflowY: 'auto' }}>
-          {people.length === 0 ? (
-            <p className="dim" style={{ padding: 'var(--s-4)' }}>No people found.</p>
-          ) : (
-            people
-              .filter((p) => p.id !== user?.id)
-              .map((p) => (
-                <button key={p.id} className="conv-item" onClick={() => startDm(p)}>
-                  <Avatar user={p} />
-                  <span className="info">
-                    <span className="title">{p.name}</span>
-                    <span className="preview">@{p.username}{p.bio ? ` · ${p.bio}` : ''}</span>
-                  </span>
-                </button>
-              ))
-          )}
-        </div>
-      </Modal>
+      <NewConversationModal
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+        onStarted={async (conversation) => {
+          await loadConversations();
+          openConversation(conversation.id);
+        }}
+      />
     </div>
+  );
+}
+
+function dayKey(value) {
+  return String(value || '').slice(0, 10);
+}
+
+function NewConversationModal({ open, onClose, onStarted }) {
+  const { toast } = useToast();
+  const [tab, setTab] = useState('people');
+  const [query, setQuery] = useState('');
+  const [people, setPeople] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [busy, setBusy] = useState(false);
+  useScrollLock(open);
+
+  useEffect(() => {
+    if (!open) return;
+    api.get('/users').then((data) => setPeople(data.users || [])).catch(() => {});
+    api.get('/events?limit=8&sort=soon').then((data) => setEvents(data.events || [])).catch(() => {});
+  }, [open]);
+
+  const results = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return people;
+    return people.filter((person) => (
+      `${person.name} ${person.username} ${person.bio || ''}`.toLowerCase().includes(needle)
+    ));
+  }, [people, query]);
+
+  const start = async (payload) => {
+    setBusy(true);
+    try {
+      const { conversation } = await api.post('/conversations', payload);
+      onStarted(conversation);
+      onClose();
+    } catch (error) {
+      toast(error.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={onClose} title="New message" size="md">
+      <div className="segmented mb-4">
+        <button type="button" className={tab === 'people' ? 'active' : ''} onClick={() => setTab('people')}>
+          People
+        </button>
+        <button type="button" className={tab === 'events' ? 'active' : ''} onClick={() => setTab('events')}>
+          Event group chats
+        </button>
+      </div>
+
+      {tab === 'people' ? (
+        <>
+          <span className="input-icon mb-3" style={{ display: 'flex' }}>
+            <Search size={15} />
+            <input
+              className="input"
+              placeholder="Search people"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              autoFocus
+            />
+          </span>
+
+          <div className="stack stack--sm" style={{ maxHeight: 320, overflowY: 'auto' }}>
+            {results.map((person) => (
+              <button
+                key={person.id}
+                className="row row--tight w-full"
+                style={{ padding: 10, borderRadius: 'var(--r-md)', border: '1px solid var(--border)', background: 'var(--surface)', textAlign: 'left' }}
+                disabled={busy}
+                onClick={() => start({ participantId: person.id })}
+              >
+                <Avatar user={person} />
+                <span className="flex-1">
+                  <span className="medium" style={{ display: 'block' }}>{person.name}</span>
+                  <span className="small muted">@{person.username}</span>
+                </span>
+              </button>
+            ))}
+            {results.length === 0 && <p className="small muted">No people match that search.</p>}
+          </div>
+        </>
+      ) : (
+        <div className="stack stack--sm" style={{ maxHeight: 360, overflowY: 'auto' }}>
+          {events.map((event) => (
+            <button
+              key={event.id}
+              className="row row--tight w-full"
+              style={{ padding: 10, borderRadius: 'var(--r-md)', border: '1px solid var(--border)', background: 'var(--surface)', textAlign: 'left' }}
+              disabled={busy}
+              onClick={() => start({ eventId: event.id })}
+            >
+              <span className="avatar avatar--md" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft)', color: 'var(--brand)', borderColor: 'transparent' }}>
+                <CalendarDays size={16} />
+              </span>
+              <span className="flex-1" style={{ minWidth: 0 }}>
+                <span className="medium truncate" style={{ display: 'block' }}>{event.title}</span>
+                <span className="small muted">{relativeDay(event.starts_at)} · {event.city || 'Online'}</span>
+              </span>
+            </button>
+          ))}
+          {events.length === 0 && <p className="small muted">No upcoming events to chat about.</p>}
+        </div>
+      )}
+    </Modal>
   );
 }

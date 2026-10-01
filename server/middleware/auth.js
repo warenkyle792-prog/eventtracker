@@ -1,5 +1,6 @@
 /** JWT auth middleware. */
 const jwt = require('jsonwebtoken');
+const { getUserById } = require('../db/helpers');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'eventtracker-dev-secret-change-me';
 
@@ -7,14 +8,24 @@ function signToken(user) {
   return jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
 }
 
-function requireAuth(req, res, next) {
+function readToken(req) {
   const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  if (header.startsWith('Bearer ')) return header.slice(7);
+  if (typeof req.query?.token === 'string') return req.query.token;
+  return null;
+}
+
+function requireAuth(req, res, next) {
+  const token = readToken(req);
   if (!token) return res.status(401).json({ error: 'Authentication required' });
+
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    req.userId = payload.id;
-    req.username = payload.username;
+    const user = getUserById(payload.id);
+    if (!user) return res.status(401).json({ error: 'Account no longer exists' });
+    req.userId = user.id;
+    req.username = user.username;
+    req.user = user;
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
@@ -22,13 +33,16 @@ function requireAuth(req, res, next) {
 }
 
 function optionalAuth(req, _res, next) {
-  const header = req.headers.authorization || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = readToken(req);
   if (token) {
     try {
       const payload = jwt.verify(token, JWT_SECRET);
-      req.userId = payload.id;
-      req.username = payload.username;
+      const user = getUserById(payload.id);
+      if (user) {
+        req.userId = user.id;
+        req.username = user.username;
+        req.user = user;
+      }
     } catch { /* anonymous */ }
   }
   next();

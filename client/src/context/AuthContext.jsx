@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, getToken, setToken } from '../api/client';
 
 const AuthContext = createContext(null);
@@ -13,21 +13,27 @@ export function AuthProvider({ children }) {
       return null;
     }
     try {
-      const { user } = await api.get('/auth/me');
-      setUser(user);
-      return user;
-    } catch {
-      setToken(null);
-      setUser(null);
+      const { user: fresh } = await api.get('/auth/me');
+      setUser(fresh);
+      return fresh;
+    } catch (error) {
+      if (error.status === 401) {
+        setToken(null);
+        setUser(null);
+      }
       return null;
     }
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       await refreshUser();
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [refreshUser]);
 
   const login = useCallback(async (email, password) => {
@@ -49,9 +55,26 @@ export function AuthProvider({ children }) {
     setUser(null);
   }, []);
 
+  /** Merge server-returned fields into the cached profile. */
+  const patchUser = useCallback((patch) => {
+    setUser((current) => (current ? { ...current, ...patch } : current));
+  }, []);
+
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, refreshUser, setUser }),
-    [user, loading, login, register, logout, refreshUser]
+    () => ({
+      user,
+      loading,
+      isAuthenticated: Boolean(user),
+      isAdmin: user?.role === 'admin',
+      isOrganizer: user?.role === 'admin' || user?.role === 'organizer',
+      login,
+      register,
+      logout,
+      refreshUser,
+      patchUser,
+      setUser,
+    }),
+    [user, loading, login, register, logout, refreshUser, patchUser]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
