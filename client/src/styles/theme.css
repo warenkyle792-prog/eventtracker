@@ -122,18 +122,14 @@ html[data-theme='light'] {
   --bg-life: rgba(66, 48, 34, 1);        /* silhouettes, used with low opacity */
   --bg-life-ink: rgba(66, 48, 34, 0.9);
 
-  /* Marine life — warm tints sampled from the palette's own range (copper,
-     gold, plum, olive, brick). Deliberately no blue anywhere. */
-  --sea-fish: #9c5218;
-  --sea-fish-fin: #b8762f;
-  --sea-school: #96731c;
-  --sea-ray: #8f3a55;
-  --sea-ray-tip: #a85a72;
-  --sea-turtle: #46703a;
-  --sea-turtle-fin: #5c8a4a;
-  --sea-jelly: #96322c;
-  --sea-jelly-arm: #b0534a;
-  --sea-bubble: #9a6a3c;
+  /* Galaxy - warm dust, no blue anywhere. Held back so white surfaces and dark
+     text keep every bit of their contrast. */
+  --galaxy-arm: #7c4112;
+  --galaxy-bright: #b06a1e;
+  --galaxy-core: #8a4a17;
+  --galaxy-star: #4a3a2c;
+  --galaxy-opacity: 0.5;
+  --galaxy-period: 260s;
   --bg-grid: rgba(0, 0, 0, 0.035);
   --bg-veil: linear-gradient(180deg, rgba(247, 247, 247, 0.6) 0%, rgba(247, 247, 247, 0.85) 60%, var(--bg-0) 100%);
 
@@ -206,18 +202,14 @@ html[data-theme='dark'] {
   --bg-life: rgba(214, 226, 235, 1);     /* silhouettes, used with low opacity */
   --bg-life-ink: rgba(214, 226, 235, 0.9);
 
-  /* Lifted and desaturated for a black background — colour that reads as
-     deep water rather than neon. Still no blue. */
-  --sea-fish: #d69455;
-  --sea-fish-fin: #e2ab72;
-  --sea-school: #d3b25f;
-  --sea-ray: #c47f93;
-  --sea-ray-tip: #d49aa8;
-  --sea-turtle: #8cb867;
-  --sea-turtle-fin: #a3ca80;
-  --sea-jelly: #c4796f;
-  --sea-jelly-arm: #d4928a;
-  --sea-bubble: #d9cdbc;
+  /* The same artwork on black: warm gold light, dimmer overall so the black
+     stays genuinely black. */
+  --galaxy-arm: #c98a4e;
+  --galaxy-bright: #f2d0a6;
+  --galaxy-core: #e8a463;
+  --galaxy-star: #fff4e6;
+  --galaxy-opacity: 0.46;
+  --galaxy-period: 240s;
   --bg-grid: rgba(255, 255, 255, 0.022);
   --bg-veil: linear-gradient(180deg, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.7) 60%, var(--bg-0) 100%);
 

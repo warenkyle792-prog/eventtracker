@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { formatMoney, monthDay, relativeDay, timeLabel } from '../utils/format';
+import { useQuickView } from './EventQuickView';
 
 const FALLBACK_COVER = '/uploads/covers/event-01-music.svg';
 
@@ -24,6 +25,7 @@ export default function EventCard({
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
+  const openQuickView = useQuickView();
 
   const [saved, setSaved] = useState(Boolean(event.is_saved));
   const [following, setFollowing] = useState(Boolean(event.is_following));
@@ -76,8 +78,25 @@ export default function EventCard({
     }
   };
 
+  /**
+   * The card body opens the quick view; its own links and buttons are left
+   * alone so the cover and the title still go straight to the full page.
+   */
+  const openDetails = (target, card) => {
+    if (target?.closest('a, button, [role="button"]')) return;
+    openQuickView(event, card);
+  };
+
   return (
-    <article className={`event-card ${isRow ? 'event-card--row' : ''}`}>
+    <article
+      className={`event-card ${isRow ? 'event-card--row' : ''}`}
+      onClick={(clickEvent) => openDetails(clickEvent.target, clickEvent.currentTarget)}
+      onKeyDown={(keyEvent) => {
+        if (keyEvent.key === 'Enter') openDetails(keyEvent.target, keyEvent.currentTarget);
+      }}
+      tabIndex={0}
+      aria-label={`${event.title} — open quick view`}
+    >
       <Link to={`/events/${event.id}`} className="event-card__media" aria-label={event.title}>
         <img
           src={event.image_url || FALLBACK_COVER}

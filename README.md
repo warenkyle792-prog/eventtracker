@@ -82,18 +82,18 @@ database and a bundled demo dataset (cover artwork included, no external assets)
 
 **Interface**
 - Live ambient background: a drifting colour wash, three soft light sources, a
-  slowly turning aurora ribbon, a panning grid, a slow spotlight that follows the
-  pointer, and marine life drifting across the water — reef fish including a
-  small school, manta rays whose wings beat, a paddling sea turtle, jellyfish
-  pulsing with trailing tentacles and rising bubbles. Each creature travels on
-  its own lane, speed and depth. Every species is tinted from the theme's own
-  warm range — copper reef fish, a gold school, rose manta rays, a green turtle
-  and brick jellyfish, each with lighter fins, wing tips, flippers and oral arms
-  (still no blue) — and each theme lifts the opacity just enough for the colour
-  to register on white or on black without ever competing with the text. The
-  layer pauses when the tab is hidden, turns still with the creatures hidden
-  under `prefers-reduced-motion`, and keeps only the near, sharper creatures on
-  small screens
+  slowly turning aurora ribbon, a panning grid and a slow spotlight that follows
+  the pointer — with a **spiral galaxy spinning behind them all**. The galaxy is
+  generated artwork (`scripts/make-galaxy.js`): two logarithmic-spiral arms and
+  two spurs, each stroked at decreasing widths so it tapers outward, a
+  gradient-glowed core and about 760 stars, tinted from the theme's own warm
+  range (no blue) and held back to around 50% opacity so it never competes with
+  content. It rotates slowly enough to read as drift rather than a spinning
+  disc, pauses when the tab is hidden, and stops entirely under
+  `prefers-reduced-motion`
+- Quick view: any event card opens a morphing dialog that grows out of the card
+  you clicked and collapses back into it, showing the cover, date, venue, price,
+  ticket tiers and the save / follow controls without leaving the list
 - Real light and dark themes — clean white/light grey in light mode, true
   neutral black in dark mode (no blue cast) — with a switcher in the navbar
 - A deliberately blue-free palette: warm copper accent over hue-free greys,
@@ -137,6 +137,7 @@ npm start            # API + built client on http://localhost:5000
 ```
 
 `npm run reset-db` wipes and re-seeds the database.
+`node scripts/make-galaxy.js` regenerates the background galaxy artwork.
 
 ### Tests
 
@@ -148,8 +149,9 @@ npm run test:ui      # renders the real React tree in jsdom and drives it
 `test:api` covers the endpoints; `test:ui` covers the screens — it signs in
 through the actual login form, checks that a wrong password is refused in place
 and a correct one lands on the home page, renders the admin dashboard and every
-admin tab against live data, and mounts the marine layer to check each species
-is present and tinted. Bugs like a form that threw before it could
+admin tab against live data, mounts the galaxy background, and opens the quick
+view dialog from a real event card (asserting the morph stays mid-flight rather
+than snapping to its end state). Bugs like a form that threw before it could
 navigate, or a dashboard that crashed rendering an object as a React child, only
 show up in a real render.
 
@@ -198,7 +200,8 @@ server/
   uploads/               covers, avatars, videos, misc
 client/
   src/components/        Navbar, MobileNav, EventCard, TicketCard, CameraCapture,
-                         MediaUploader, Payments, UI, Background, MarineLife
+                         MediaUploader, Payments, UI, Background,
+                         EventQuickView
   src/context/           Theme, Auth, Toast, Notification providers
   src/hooks/             media queries, async helper, event search state
   src/pages/             Home, Discover, Events, EventDetails, CreateEvent,

@@ -267,8 +267,7 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
     animation: none !important;
   }
 
-  .app-bg__spot,
-  .app-bg__sea { display: none; }
+  .app-bg__spot { display: none; }
 
   *, *::before, *::after {
     animation-duration: 0.001ms !important;
@@ -3667,219 +3666,267 @@ a.link:hover, button.link:hover { text-decoration: underline; }
 }
 
 /* ---------------------------------------------------------------------------
- * Marine life — silhouettes drifting across the background.
+ * Quick view — the morphing dialog behind the event cards.
  *
- * Each creature is a wrapper that travels across the viewport, an inner
- * element that bobs and pitches, and (where it applies) named parts inside the
- * SVG that animate on their own cycle: wings flap, flippers paddle, bells
- * pulse and tentacles trail. Colours come from --bg-life; opacity and blur set
- * the perceived depth.
+ * The panel is laid out at its resting size the whole time; the morph is a
+ * transform from the clicked card's rectangle, so nothing re-lays out per frame
+ * and the text is already sharp when it settles.
  * ------------------------------------------------------------------------- */
 
-.app-bg__sea {
+.quick-view {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.quick-view__scrim {
   position: absolute;
   inset: 0;
-  color: var(--bg-life);
+  border: 0;
+  padding: 0;
+  background: var(--scrim);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  cursor: default;
 }
 
-/* One tint per species, each with a lighter second tone on the fins, wing tips,
-   flippers and oral arms. Warm throughout — no blue. */
-.sea-item--fish { color: var(--sea-fish); }
-.sea-item--school { color: var(--sea-school); }
-.sea-item--ray { color: var(--sea-ray); }
-.sea-item--turtle { color: var(--sea-turtle); }
-.sea-item--jelly { color: var(--sea-jelly); }
-.sea-bubble { color: var(--sea-bubble); }
+.quick-view--open .quick-view__scrim,
+.quick-view--opening .quick-view__scrim { opacity: 1; }
+.quick-view--closing { pointer-events: none; }
 
-.sea-item {
+.quick-view__panel {
   position: absolute;
-  top: var(--lane, 40%);
-  left: var(--left, 0);
-  width: var(--w, 90px);
-  opacity: var(--o, 0.1);
-  filter: blur(var(--blur, 0px));
-  animation: sea-travel-ltr var(--dur, 120s) linear infinite;
-  animation-delay: var(--delay, 0s);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--r-xl);
+  border: 1px solid var(--border);
+  background: var(--glass-strong, var(--glass));
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  transform-origin: top left;
+}
+
+.quick-view--opening .quick-view__panel {
+  animation: quick-view-in var(--qv-in, 340ms) cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.quick-view--closing .quick-view__panel {
+  animation: quick-view-out var(--qv-out, 240ms) cubic-bezier(0.4, 0, 0.7, 0.2) both;
+}
+
+@keyframes quick-view-in {
+  from { transform: translate(var(--morph-dx, 0), var(--morph-dy, 0)) scale(var(--morph-sx, 0.9), var(--morph-sy, 0.6)); }
+  to   { transform: none; }
+}
+
+@keyframes quick-view-out {
+  from { transform: none; }
+  to   { transform: translate(var(--morph-dx, 0), var(--morph-dy, 0)) scale(var(--morph-sx, 0.9), var(--morph-sy, 0.6)); }
+}
+
+/* Contents fade in as the panel grows, and never squash out of shape. */
+.quick-view__inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  opacity: 0;
+  transition: opacity 0.25s ease 0.06s;
+}
+
+.quick-view--open .quick-view__inner { opacity: 1; }
+
+.quick-view__head { position: relative; flex: 0 0 auto; }
+
+.quick-view__cover { position: relative; height: 190px; background: var(--surface-2); }
+.quick-view__cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.quick-view__cat {
+  position: absolute;
+  left: var(--s-5);
+  bottom: var(--s-4);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: var(--glass-strong, var(--glass));
+  border: 1px solid var(--border);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.quick-view__cat i { width: 8px; height: 8px; border-radius: 50%; }
+
+.quick-view__close {
+  position: absolute;
+  top: var(--s-4);
+  right: var(--s-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--glass-strong, var(--glass));
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.quick-view__close:hover { color: var(--text-0); border-color: var(--border-strong, var(--border)); }
+
+.quick-view__body {
+  padding: var(--s-5);
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.quick-view__title { font-size: var(--fs-2xl); line-height: 1.2; }
+.quick-view__tagline { margin-top: 6px; color: var(--text-2); }
+
+.quick-view__facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-4);
+  margin-top: var(--s-5);
+}
+
+.quick-view__facts dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.quick-view__facts dd { margin-top: 4px; color: var(--text-1); font-size: var(--fs-sm); }
+
+.quick-view__description {
+  margin-top: var(--s-5);
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+.quick-view__note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: var(--s-4);
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+}
+
+.quick-view__tiers {
+  list-style: none;
+  margin: var(--s-5) 0 0;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-md);
+  overflow: hidden;
+}
+
+.quick-view__tiers li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--s-4);
+  align-items: center;
+  padding: 10px var(--s-4);
+  font-size: var(--fs-sm);
+  color: var(--text-1);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.quick-view__tiers li:last-child { border-bottom: none; }
+
+.quick-view__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: var(--s-4) var(--s-5);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  flex: 0 0 auto;
+}
+
+.quick-view__actions .is-active { color: var(--brand); border-color: var(--brand); }
+.quick-view__full { margin-left: auto; }
+
+@media (max-width: 720px) {
+  .quick-view__cover { height: 140px; }
+  .quick-view__facts { grid-template-columns: 1fr; gap: var(--s-3); }
+  .quick-view__body { padding: var(--s-4); }
+  .quick-view__actions { padding: var(--s-3) var(--s-4); flex-wrap: wrap; }
+  .quick-view__full { margin-left: 0; width: 100%; justify-content: center; }
+  .quick-view__panel { border-radius: var(--r-lg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quick-view--opening .quick-view__panel,
+  .quick-view--closing .quick-view__panel { animation: none; }
+  .quick-view__inner { transition: none; opacity: 1; }
+  .quick-view__scrim { transition: none; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Galaxy - a generated spiral SVG that spins behind everything.
+ *
+ * The artwork is one inline SVG whose colours come from the galaxy tokens, so
+ * both themes share it. It is drawn larger than the viewport and creeps around
+ * on a very slow wobble; the rotation is slow enough to read as drift rather
+ * than a spinning disc.
+ * ------------------------------------------------------------------------- */
+
+.app-bg__galaxy {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 118vmax;
+  height: 118vmax;
+  opacity: var(--galaxy-opacity, 0.5);
+  animation: galaxy-spin var(--galaxy-period, 240s) linear infinite;
   will-change: transform;
 }
 
-/* Fins and flippers: scale about each part's own box. */
-.sea-manta__wings,
-.sea-turtle__flipper,
-.sea-jelly__bell,
-.sea-jelly__tentacles {
-  transform-box: fill-box;
-  transform-origin: 50% 50%;
-}
-
-.sea-item svg {
-  display: block;
-  width: 100%;
-  height: auto;
-  fill: currentColor;
-}
-
-/* Right-to-left swimmers mirror the artwork, but never the eyes-only details:
-   the whole silhouette flips, which is what a real fish does when it turns. */
-.sea-item--flip svg { transform: scaleX(-1); }
-.sea-item--rtl { animation-name: sea-travel-rtl; }
-
-.sea-item__inner {
-  display: block;
-  animation: sea-bob var(--bob, 12s) ease-in-out infinite alternate;
-  animation-delay: var(--delay, 0s);
-}
-
-/* ---- travel: off-screen left → off-screen right, and the reverse ---- */
-
-@keyframes sea-travel-ltr {
-  from { transform: translate3d(-24vw, 0, 0); }
-  to   { transform: translate3d(120vw, 0, 0); }
-}
-
-@keyframes sea-travel-rtl {
-  from { transform: translate3d(120vw, 0, 0); }
-  to   { transform: translate3d(-24vw, 0, 0); }
-}
-
-/* ---- swimming: a slow rise and fall with a slight pitch ---- */
-
-@keyframes sea-bob {
-  from { transform: translate3d(0, -8px, 0) rotate(-2.2deg); }
-  to   { transform: translate3d(0, 8px, 0) rotate(2.2deg); }
-}
-
-/* ---- manta: wings beat up and down, body barely moves ---- */
-
-.sea-manta__wings {
-  animation: sea-flap var(--flap, 8s) ease-in-out infinite alternate;
-  animation-delay: var(--delay, 0s);
-}
-
-@keyframes sea-flap {
-  from { transform: scaleY(0.88); }
-  to   { transform: scaleY(1.08); }
-}
-
-/* ---- sea turtle: unhurried paddle of the front flipper ---- */
-
-.sea-turtle__flipper {
-  transform-origin: 12% 50%;
-  animation: sea-paddle var(--paddle, 4.5s) ease-in-out infinite alternate;
-  animation-delay: var(--delay, 0s);
-}
-
-@keyframes sea-paddle {
-  from { transform: rotate(-16deg); }
-  to   { transform: rotate(11deg); }
-}
-
-/* ---- jellyfish: drift upward while the bell pulses and the
-        tentacles lag a beat behind ---- */
-
-/* Jellyfish do not commute: they pulse in place, rising and sinking on a slow
-   alternation so the loop never snaps back. */
-.sea-item--jelly {
-  animation: sea-jelly var(--dur, 96s) ease-in-out infinite alternate;
-  animation-delay: var(--delay, 0s);
-}
-
-@keyframes sea-jelly {
-  from { transform: translate3d(0, 7vh, 0); }
-  to   { transform: translate3d(3vw, -11vh, 0); }
-}
-
-.sea-jelly__bell {
-  transform-origin: 50% 6%;
-  animation: sea-bell var(--pulse, 7s) ease-in-out infinite alternate;
-  animation-delay: var(--delay, 0s);
-}
-
-@keyframes sea-bell {
-  from { transform: scale(1.06, 0.86); }
-  to   { transform: scale(0.96, 1.06); }
-}
-
-.sea-jelly__tentacles {
-  transform-origin: 50% 0%;
-  animation: sea-tentacles var(--pulse, 7s) ease-in-out infinite alternate;
-  /* half a beat behind the bell */
-  animation-delay: calc(var(--delay, 0s) - 1.4s);
-}
-
-@keyframes sea-tentacles {
-  from { transform: skewX(-5deg) translateY(-1px); }
-  to   { transform: skewX(4deg) translateY(2px); }
-}
-
-/* ---- school: eight small fish trailing in a loose line ---- */
-
-.sea-item--school { width: 200px; height: 96px; }
-
-.sea-school__fish {
-  position: absolute;
-  top: var(--dy, 0);
-  left: var(--dx, 0);
-  width: calc(46px * var(--s, 1));
-  opacity: 0.9;
-  animation: sea-bob 5.5s ease-in-out infinite alternate;
-  animation-delay: var(--d, 0s);
-}
-
-/* ---- bubbles ---- */
-
-.sea-bubble {
-  position: absolute;
-  bottom: -6vh;
-  left: var(--x, 50%);
-  width: var(--size, 4px);
-  height: var(--size, 4px);
-  animation: sea-rise var(--dur, 44s) linear infinite;
-  animation-delay: var(--delay, 0s);
-  will-change: transform;
-}
-
-.sea-bubble > span {
+.app-bg__galaxy svg {
   display: block;
   width: 100%;
   height: 100%;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  opacity: var(--o, 0.14);
-  animation: sea-sway var(--sway, 6s) ease-in-out infinite alternate;
+  transform-origin: 50% 50%;
+  /* A slow drift under the rotation, so it never looks like a flat turntable. */
+  animation: galaxy-wobble 96s ease-in-out infinite alternate;
 }
 
-@keyframes sea-rise {
-  from { transform: translate3d(0, 0, 0); }
-  to   { transform: translate3d(0, -118vh, 0); }
+@keyframes galaxy-spin {
+  from { transform: translate(-50%, -50%) rotate(0deg); }
+  to   { transform: translate(-50%, -50%) rotate(360deg); }
 }
 
-@keyframes sea-sway {
-  from { transform: translate3d(-6px, 0, 0); }
-  to   { transform: translate3d(6px, 0, 0); }
+@keyframes galaxy-wobble {
+  from { transform: translate(-1.5%, 1%) scale(1); }
+  to   { transform: translate(1.5%, -1%) scale(1.045); }
 }
-
-/* Pale artwork on a near-white page loses its hue, and a black background
-   swallows it; each theme gets just enough lift for the colour to register
-   without ever competing with the text. */
-html[data-theme='light'] .sea-item { opacity: calc(var(--o, 0.12) * 1.2); }
-html[data-theme='light'] .sea-bubble > span { opacity: calc(var(--o, 0.14) * 1.15); }
-html[data-theme='dark'] .sea-item { opacity: calc(var(--o, 0.12) * 1.45); }
-html[data-theme='dark'] .sea-bubble > span { opacity: calc(var(--o, 0.14) * 1.5); }
 
 /* Freeze the whole layer while the tab is hidden. */
-.app-bg.is-paused .app-bg__sea,
-.app-bg.is-paused .app-bg__sea * { animation-play-state: paused; }
+.app-bg.is-paused .app-bg__galaxy,
+.app-bg.is-paused .app-bg__galaxy svg { animation-play-state: paused; }
 
-/* Small screens: keep the near creatures, drop the distant ones. */
+/* Phones: a larger galaxy keeps the bright core away from the headline. */
 @media (max-width: 720px) {
-  .sea-item--far,
-  .sea-bubble--far { display: none; }
-
-  .sea-item { filter: blur(1px); }
+  .app-bg__galaxy { width: 150vmax; height: 150vmax; }
 }
 
-/* Anyone asking for less motion gets the still water instead. */
+/* Anyone asking for less motion gets a still sky. */
 @media (prefers-reduced-motion: reduce) {
-  .app-bg__sea { display: none; }
+  .app-bg__galaxy,
+  .app-bg__galaxy svg { animation: none; }
 }

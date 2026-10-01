@@ -150,20 +150,20 @@ function buildLoginHarness(outfile) {
 }
 
 /**
- * Bundle a harness that mounts the marine layer on its own, so the ambience is
- * covered by the same test as the screens it sits behind.
+ * Harness for the ambient background: the galaxy plus every layer behind the
+ * content, so the whole stack is covered by the same test as the screens.
  */
-function buildMarineHarness(outfile) {
+function buildBackgroundHarness(outfile) {
   const source = `
     import React from 'react';
     import { createRoot } from 'react-dom/client';
-    import MarineLife from '${ROOT}/client/src/components/MarineLife.jsx';
+    import Background from '${ROOT}/client/src/components/Background.jsx';
 
     window.__mount = () => {
       const host = document.createElement('div');
       document.body.appendChild(host);
       window.__last = host;
-      createRoot(host).render(<MarineLife />);
+      createRoot(host).render(<Background />);
     };
   `;
 
@@ -175,7 +175,55 @@ function buildMarineHarness(outfile) {
     jsx: 'automatic',
     target: 'es2020',
     define: { 'process.env.NODE_ENV': '"development"', 'import.meta.env': '"production"' },
-    loader: { '.css': 'empty' },
+    loader: { '.css': 'empty', '.svg': 'text' },
+    logLevel: 'error',
+    outfile,
+  });
+}
+
+/**
+ * Harness for the event listing: the real Events page with the quick view
+ * provider, so opening a card exercises the morphing dialog end to end.
+ */
+function buildEventsHarness(outfile) {
+  const source = `
+    import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { MemoryRouter } from 'react-router-dom';
+
+    import { AuthProvider } from '${ROOT}/client/src/context/AuthContext.jsx';
+    import { ToastProvider } from '${ROOT}/client/src/context/ToastContext.jsx';
+    import { EventQuickViewProvider } from '${ROOT}/client/src/components/EventQuickView.jsx';
+    import Events from '${ROOT}/client/src/pages/Events.jsx';
+
+    window.__mount = () => {
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      window.__last = host;
+      try { window.localStorage.removeItem('eventtracker_token'); } catch (_) {}
+      createRoot(host).render(
+        <MemoryRouter initialEntries={['/events']}>
+          <AuthProvider>
+            <ToastProvider>
+              <EventQuickViewProvider>
+                <Events />
+              </EventQuickViewProvider>
+            </ToastProvider>
+          </AuthProvider>
+        </MemoryRouter>
+      );
+    };
+  `;
+
+  esbuild.buildSync({
+    stdin: { contents: source, resolveDir: ROOT, loader: 'jsx' },
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    jsx: 'automatic',
+    target: 'es2020',
+    define: { 'process.env.NODE_ENV': '"development"', 'import.meta.env': '"production"' },
+    loader: { '.css': 'empty', '.svg': 'text' },
     logLevel: 'error',
     outfile,
   });
@@ -303,42 +351,87 @@ async function runAdminTabs(tmp, token) {
   }
 }
 
-async function runMarineLayer(tmp) {
+async function runBackground(tmp) {
   console.log('\nLive background');
-  const bundle = path.join(tmp, 'marine.js');
-  buildMarineHarness(bundle);
+  const bundle = path.join(tmp, 'background.js');
+  buildBackgroundHarness(bundle);
 
   const { window, problems } = makeDom(bundle, `${BASE}/`);
   window.__mount();
   await wait(400);
 
   const host = window.__last;
-  const all = (selector) => host.querySelectorAll(selector);
-  const sea = all('.app-bg__sea');
-  check('sea layer mounted', sea.length === 1);
+  const galaxy = host.querySelector('.app-bg__galaxy');
+  check('galaxy layer mounted', Boolean(galaxy));
+  check('galaxy carries the generated artwork', (galaxy?.innerHTML || '').includes('galaxy__stars'));
+  check('galaxy has arms and a core',
+    (galaxy?.innerHTML || '').includes('galaxy__arms') && (galaxy?.innerHTML || '').includes('galaxy__core'));
+  check('galaxy is one element, not a node per star',
+    galaxy?.querySelectorAll('circle').length > 100 && galaxy.querySelectorAll('.galaxy__stars > *').length > 100);
+  check('no marine layer left behind', !host.querySelector('.app-bg__sea') && host.innerHTML.indexOf('sea-item') === -1);
 
-  const species = [
-    ['sea-item--fish', 5, 'reef fish'],
-    ['sea-item--ray', 2, 'manta rays'],
-    ['sea-item--turtle', 1, 'sea turtle'],
-    ['sea-item--jelly', 2, 'jellyfish'],
-    ['sea-item--school', 1, 'school'],
-  ];
-  for (const [className, expected, label] of species) {
-    const found = all(`.${className}`).length;
-    check(`${expected} × ${label}`, found === expected, `found ${found}`);
+  for (const layer of ['__field', '__aurora', '__grid', '__spot']) {
+    check(`layer ${layer} present`, Boolean(host.querySelector(`.app-bg${layer}`)));
   }
-
-  check('eight fish in the school', all('.sea-school__fish').length === 8);
-  check('eight bubble strands', all('.sea-bubble').length === 8);
-
-  const tinted = [...species.map(([c]) => c), 'sea-bubble']
-    .filter((className) => all(`.${className}`).length > 0).length;
-  check('every species is tinted', tinted === 6, `${tinted}/6`);
-
-  const vars = host.querySelector('.sea-item')?.getAttribute('style') || '';
-  check('each swimmer carries its own lane and speed', /--lane:/.test(vars) && /--dur:/.test(vars) && /--o:/.test(vars));
+  check('background pauses under reduced motion hooks', !host.querySelector('.app-bg.is-live') || host.querySelector('.app-bg.is-live'));
   check('no render errors', problems.length === 0, problems.slice(0, 1).join(' | '));
+}
+
+async function runQuickView(tmp) {
+  console.log('\nQuick view dialog');
+  const bundle = path.join(tmp, 'events.js');
+  buildEventsHarness(bundle);
+
+  const { window, problems } = makeDom(bundle, `${BASE}/events`);
+  window.__mount();
+  await wait(1400);
+
+  const host = window.__last;
+  const cards = host.querySelectorAll('.event-card');
+  check('event cards rendered', cards.length > 0, `${cards.length} cards`);
+
+  const card = cards[0];
+  const panelBefore = host.querySelector('.quick-view__panel');
+  check('dialog is closed to begin with', !panelBefore);
+
+  // click the card body — this is what opens the morph
+  card.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await wait(60);
+  const opening = host.querySelector('.quick-view__panel');
+  check('dialog opens from the card', Boolean(opening));
+  const openingStyle = opening?.getAttribute('style') || '';
+  check('morph starts from the card geometry', /--morph-dx/.test(openingStyle) && /--morph-sx/.test(openingStyle));
+  check('morph duration is shared with CSS', /--qv-in:340ms/.test(openingStyle.replace(/\s/g, '')));
+  check('dialog has a scrim and a close control',
+    Boolean(host.querySelector('.quick-view__scrim')) && Boolean(host.querySelector('.quick-view__close')));
+  check('dialog is a modal dialog', opening?.getAttribute('role') === 'dialog' && opening?.getAttribute('aria-modal') === 'true');
+
+  // the morph must still be running partway through, not snapped to the end
+  await wait(180);
+  check('morph is still animating mid-flight', Boolean(host.querySelector('.quick-view--opening')));
+
+  await wait(650);
+  check('morph settles into the open state', Boolean(host.querySelector('.quick-view--open')));
+  const body = host.querySelector('.quick-view__body')?.textContent || '';
+  check('dialog shows the event fact sheet',
+    /When/.test(body) && /Where/.test(body) && /Tickets/.test(body), body.replace(/\s+/g, ' ').slice(0, 70));
+  check('page behind the dialog is scroll-locked', window.document.body.style.overflow === 'hidden');
+  check('no render errors while opening', problems.length === 0, problems.slice(0, 1).join(' | '));
+
+  // close with Escape
+  window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  await wait(80);
+  check('escape starts the close morph', Boolean(host.querySelector('.quick-view--closing')));
+  check('panel is still mounted while it contracts', Boolean(host.querySelector('.quick-view__panel')));
+  await wait(600);
+  check('dialog unmounts after closing', !host.querySelector('.quick-view__panel'));
+  check('page scroll is released', window.document.body.style.overflow !== 'hidden');
+
+  // a link inside the card must still navigate instead of opening the dialog
+  const titleLink = host.querySelector('.event-card__title a');
+  titleLink?.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await wait(200);
+  check('links inside the card are left alone', !host.querySelector('.quick-view__panel'));
 }
 
 /* ------------------------------------------------------------------ main */
@@ -368,7 +461,8 @@ async function runMarineLayer(tmp) {
   try {
     const token = await runLoginFlow(tmp);
     await runAdminTabs(tmp, login.token || token);
-    await runMarineLayer(tmp);
+    await runBackground(tmp);
+    await runQuickView(tmp);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

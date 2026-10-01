@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 
+import galaxy from '../assets/galaxy.svg?raw';
 import { useDocumentVisible, usePrefersReducedMotion } from '../hooks';
-import MarineLife from './MarineLife';
 
 /**
  * Ambient live background.
@@ -11,13 +11,17 @@ import MarineLife from './MarineLife';
  *   blobs   — three soft light sources on long, offset drift cycles
  *   aurora  — a wide conic ribbon rotating behind the grid
  *   grid    — faint lattice that pans almost imperceptibly
- *   sea     — fish, a school, manta rays, a sea turtle, jellyfish and bubbles
+ *   galaxy  — a spiral galaxy that spins on a very slow wobble
  *   spot    — soft light that eases towards the pointer (fine pointers only)
  *
  * Everything is transform/opacity only, so it stays on the compositor. The
  * whole thing pauses when the tab is hidden, and reduced-motion visitors get a
  * static wash with no animations at all. Contrast never changes: the layers sit
  * behind `main` (z-index 1) and stay well under 15% opacity.
+ *
+ * The galaxy is one generated SVG (scripts/make-galaxy.js) with the colours on
+ * CSS variables, so it costs a single inline element rather than several
+ * hundred React nodes for its stars.
  */
 export default function Background() {
   const visible = useDocumentVisible();
@@ -68,7 +72,11 @@ export default function Background() {
       <div className="app-bg__blob app-bg__blob--3" />
       <div className="app-bg__aurora" />
       <div className="app-bg__grid" />
-      <MarineLife />
+      <div
+        className="app-bg__galaxy"
+        // Generated artwork with --galaxy-* tokens resolved by the CSS cascade.
+        dangerouslySetInnerHTML={{ __html: galaxy }}
+      />
       <div className="app-bg__spot" />
     </div>
   );

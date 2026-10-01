@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
 
 import Background from './components/Background';
+import { EventQuickViewProvider } from './components/EventQuickView';
 import MobileNav from './components/MobileNav';
 import Navbar from './components/Navbar';
 import { LoadingBlock } from './components/UI';
@@ -51,50 +52,52 @@ function RouteFallback() {
 
 export default function App() {
   return (
-    <div className="app-shell">
-      <a className="skip-link" href="#main">Skip to content</a>
-      <Background />
-      <ScrollToTop />
-      <Navbar />
+    <EventQuickViewProvider>
+      <div className="app-shell">
+        <a className="skip-link" href="#main">Skip to content</a>
+        <Background />
+        <ScrollToTop />
+        <Navbar />
 
-      <main id="main" className="app-main">
-        <Suspense fallback={<RouteFallback />}>
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/discover" element={<Discover />} />
-            <Route path="/events" element={<Events />} />
-            <Route path="/events/new" element={<CreateEvent />} />
-            <Route path="/events/:id" element={<EventDetails />} />
-            <Route path="/events/:id/edit" element={<CreateEvent />} />
-            <Route path="/checkout/:id" element={<Checkout />} />
+        <main id="main" className="app-main">
+          <Suspense fallback={<RouteFallback />}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/discover" element={<Discover />} />
+              <Route path="/events" element={<Events />} />
+              <Route path="/events/new" element={<CreateEvent />} />
+              <Route path="/events/:id" element={<EventDetails />} />
+              <Route path="/events/:id/edit" element={<CreateEvent />} />
+              <Route path="/checkout/:id" element={<Checkout />} />
 
-            <Route path="/categories" element={<Categories />} />
-            <Route path="/categories/:slug" element={<CategoryDetail />} />
+              <Route path="/categories" element={<Categories />} />
+              <Route path="/categories/:slug" element={<CategoryDetail />} />
 
-            <Route path="/tickets" element={<Tickets />} />
-            <Route path="/tickets/:code" element={<TicketDetail />} />
-            <Route path="/verify" element={<Verify />} />
+              <Route path="/tickets" element={<Tickets />} />
+              <Route path="/tickets/:code" element={<TicketDetail />} />
+              <Route path="/verify" element={<Verify />} />
 
-            <Route path="/promotions" element={<Promotions />} />
-            <Route path="/notifications" element={<Notifications />} />
+              <Route path="/promotions" element={<Promotions />} />
+              <Route path="/notifications" element={<Notifications />} />
 
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/u/:username" element={<Profile />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/u/:username" element={<Profile />} />
 
-            <Route path="/chat" element={<Chat />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/admin" element={<Admin />} />
+              <Route path="/chat" element={<Chat />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/admin" element={<Admin />} />
 
-            <Route path="/saved" element={<SavedRedirect />} />
-            <Route path="/following" element={<SavedRedirect />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </Suspense>
-      </main>
+              <Route path="/saved" element={<SavedRedirect />} />
+              <Route path="/following" element={<SavedRedirect />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </main>
 
-      <MobileNav />
-    </div>
+        <MobileNav />
+      </div>
+    </EventQuickViewProvider>
   );
 }
 
