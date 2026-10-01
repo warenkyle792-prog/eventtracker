@@ -16,6 +16,13 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 
 const DATA_DIR = path.join(__dirname, 'data');
+
+/**
+ * Platform commission on ticket sales, in percent of the ticket subtotal.
+ * Mirrors the `service_fee_percent` setting the payment flow reads, so the
+ * seeded ledger carries the same fee an organiser would pay live.
+ */
+const SERVICE_FEE_PERCENT = 5;
 const DB_FILE = path.join(DATA_DIR, 'eventtracker.db');
 
 if (process.argv.includes('--reset')) {
@@ -644,19 +651,25 @@ function issueSeededTickets({ buyer, eventIdx, tierIdx, quantity, method, status
   if (!tier) return null;
 
   const event = db.prepare('SELECT currency FROM events WHERE id = ?').get(eventId);
-  const amount = tier.price_cents * quantity;
+
+  // The buyer pays the ticket subtotal plus the platform service fee, exactly
+  // as buildCart does in the live flow — so commission is a real ledger figure.
+  const subtotal = tier.price_cents * quantity;
+  const fee = method === 'free' ? 0 : Math.round(subtotal * (SERVICE_FEE_PERCENT / 100));
+  const amount = subtotal + fee;
   const created = at(-daysAgo, 10, 30);
   const reference = `ET-TIX-${String(Math.random().toString(36).slice(2, 7)).toUpperCase()}${daysAgo}`;
 
   const info = db.prepare(`
-    INSERT INTO transactions (reference, user_id, event_id, purpose, amount_cents, currency, method, provider,
+    INSERT INTO transactions (reference, user_id, event_id, purpose, amount_cents, fee_cents, currency, method, provider,
                               provider_reference, status, payer_phone, receipt, metadata, completed_at, created_at, updated_at)
-    VALUES (?, ?, ?, 'ticket', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, 'ticket', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     reference,
     userId[buyer],
     eventId,
     amount,
+    fee,
     event?.currency || 'KES',
     method,
     method === 'mpesa' ? 'mpesa' : method === 'free' ? 'internal' : 'card',
@@ -664,7 +677,11 @@ function issueSeededTickets({ buyer, eventIdx, tierIdx, quantity, method, status
     status,
     payerPhone,
     receipt,
-    JSON.stringify({ items: [{ ticket_type_id: tier.id, quantity }], attendees: [] }),
+    JSON.stringify({
+      items: [{ ticket_type_id: tier.id, quantity }],
+      attendees: [],
+      notes: `subtotal=${subtotal};fee=${fee}`,
+    }),
     status === 'successful' ? sqlTime(created) : '',
     sqlTime(created),
     sqlTime(created)
@@ -727,7 +744,7 @@ for (const ticket of seededTickets.slice(-3)) {
 
 // Non-successful ledger entries so admin filters have something to show.
 const LEDGER_NOISE = [
-  { buyer: 'njeri', eventIdx: 9, tierIdx: 0, method: 'mpesa', status: 'pending', daysAgo: 0, phone: '254712345678' },
+  { buyer: 'njeri', eventIdx: 12, tierIdx: 0, method: 'mpesa', status: 'pending', daysAgo: 0, phone: '254712345678' },
   { buyer: 'brian', eventIdx: 2, tierIdx: 1, method: 'mpesa', status: 'failed', daysAgo: 1, phone: '254722334455', reason: 'Insufficient funds' },
   { buyer: 'wanjiku', eventIdx: 8, tierIdx: 0, method: 'card', status: 'cancelled', daysAgo: 2, reason: 'Customer cancelled the request' },
   { buyer: 'omar', eventIdx: 0, tierIdx: 1, method: 'mpesa', status: 'refunded', daysAgo: 12, phone: '254799887766', reason: 'Duplicate purchase — refunded by admin' },
@@ -736,18 +753,24 @@ const LEDGER_NOISE = [
 
 for (const entry of LEDGER_NOISE) {
   const eventId = eventIds[entry.eventIdx];
-  const tier = db.prepare('SELECT * FROM ticket_types WHERE event_id = ? ORDER BY sort_order').get(eventId);
+  const eventTiers = db.prepare('SELECT * FROM ticket_types WHERE event_id = ? ORDER BY sort_order').all(eventId);
+  // A payment that never went through should still be about a real price: the
+  // noise rows are all paid attempts, so skip any free tier on that event.
+  const tier = eventTiers.find((t) => t.price_cents > 0) || eventTiers[0];
+  if (!tier) continue;
   const created = at(-entry.daysAgo, 11, 15);
+  const fee = Math.round(tier.price_cents * (SERVICE_FEE_PERCENT / 100));
 
   db.prepare(`
-    INSERT INTO transactions (reference, user_id, event_id, purpose, amount_cents, currency, method, provider,
+    INSERT INTO transactions (reference, user_id, event_id, purpose, amount_cents, fee_cents, currency, method, provider,
                               provider_reference, status, payer_phone, failure_reason, metadata, created_at, updated_at)
-    VALUES (?, ?, ?, 'ticket', ?, 'KES', ?, ?, ?, ?, ?, ?, '{}', ?, ?)
+    VALUES (?, ?, ?, 'ticket', ?, ?, 'KES', ?, ?, ?, ?, ?, ?, '{}', ?, ?)
   `).run(
     `ET-TIX-${String(Math.random().toString(36).slice(2, 7)).toUpperCase()}${entry.daysAgo}`,
     userId[entry.buyer],
     eventId,
-    tier.price_cents,
+    tier.price_cents + fee,
+    fee,
     entry.method,
     entry.method === 'mpesa' ? 'mpesa' : 'card',
     entry.method === 'mpesa' ? `ws_CO_NOISE_${entry.daysAgo}` : `pi_noise_${entry.daysAgo}`,
@@ -925,6 +948,14 @@ makeEventChat(2, [
 ]);
 
 console.log('· chat conversations');
+
+// Platform settings the payment flow reads at runtime. The service fee here is
+// the same rate the seeded commission was calculated with.
+db.prepare(`
+  INSERT INTO settings (key, value) VALUES ('service_fee_percent', ?)
+  ON CONFLICT(key) DO UPDATE SET value = excluded.value
+`).run(String(SERVICE_FEE_PERCENT));
+console.log(`· platform settings (service fee ${SERVICE_FEE_PERCENT}%)`);
 
 console.log('\nSeed complete.');
 console.log('  Sign in with admin@eventtracker.app (admin) or any demo account below.');

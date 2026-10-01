@@ -22,6 +22,7 @@ const db = require('../../db');
 const money = require('./money');
 const notifications = require('../notifications');
 const audit = require('../../db/helpers').audit;
+const getSetting = require('../../db/helpers').getSetting;
 
 const mpesa = require('./providers/mpesa');
 const card = require('./providers/card');
@@ -105,6 +106,9 @@ function publicTransaction(txn) {
     status: txn.status,
     amount_cents: txn.amount_cents,
     amount_formatted: money.format(txn.amount_cents, txn.currency),
+    fee_cents: Number(txn.fee_cents || 0),
+    fee_formatted: money.format(Number(txn.fee_cents || 0), txn.currency),
+    net_cents: Math.max(0, Number(txn.amount_cents || 0) - Number(txn.fee_cents || 0)),
     currency: txn.currency,
     method: txn.method,
     provider: txn.provider,
@@ -159,7 +163,7 @@ function touch(reference, fields) {
 async function createIntent(input) {
   const {
     userId, purpose = 'ticket', amountCents, currency = money.DEFAULT_CURRENCY,
-    method, metadata = {}, eventId = null, promotionId = null,
+    method, metadata = {}, eventId = null, promotionId = null, feeCents = 0,
     payerPhone = '', payerEmail = '', idempotencyKey = '',
   } = input || {};
 
@@ -182,6 +186,10 @@ async function createIntent(input) {
   const amount = Math.round(Number(amountCents) || 0);
   if (amount <= 0) throw Object.assign(new Error('The payment amount must be greater than zero'), { status: 400 });
   if (amount > 100_000_000) throw Object.assign(new Error('The payment amount is too large'), { status: 400 });
+
+  // Platform commission carried by this transaction. Recalculated by the caller
+  // from server-side prices; never trusted from the client.
+  const fee = Math.max(0, Math.min(Math.round(Number(feeCents) || 0), amount));
 
   if (method === 'mpesa') {
     const phone = mpesa.normalizePhone(payerPhone);
@@ -208,11 +216,11 @@ async function createIntent(input) {
 
   db.prepare(`
     INSERT INTO transactions (
-      reference, user_id, event_id, promotion_id, purpose, amount_cents, currency,
+      reference, user_id, event_id, promotion_id, purpose, amount_cents, fee_cents, currency,
       method, provider, status, payer_phone, payer_email, metadata, idempotency_key
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
   `).run(
-    reference, userId, eventId, promotionId, purpose, amount, currencyCode,
+    reference, userId, eventId, promotionId, purpose, amount, fee, currencyCode,
     method, provider.id,
     method === 'mpesa' ? mpesa.normalizePhone(payerPhone) : '',
     String(payerEmail || '').slice(0, 140),
@@ -558,6 +566,9 @@ function listTransactions({
       COALESCE(SUM(CASE WHEN status = 'successful' THEN amount_cents ELSE 0 END), 0) AS settled,
       COALESCE(SUM(CASE WHEN status = 'pending' THEN amount_cents ELSE 0 END), 0) AS pending,
       COALESCE(SUM(CASE WHEN status = 'refunded' THEN amount_cents ELSE 0 END), 0) AS refunded,
+      COALESCE(SUM(CASE WHEN status = 'successful' AND purpose = 'ticket' THEN fee_cents ELSE 0 END), 0) AS commission,
+      COALESCE(SUM(CASE WHEN status IN ('pending','processing') AND purpose = 'ticket' THEN fee_cents ELSE 0 END), 0) AS commission_pending,
+      COALESCE(SUM(CASE WHEN status = 'refunded' AND purpose = 'ticket' THEN fee_cents ELSE 0 END), 0) AS commission_refunded,
       COUNT(*) AS count
     FROM transactions
   `).get();
@@ -569,6 +580,41 @@ function ledgerForUser(userId, limit = 30) {
   return db.prepare(`
     SELECT * FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT ?
   `).all(userId, limit).map(publicTransaction);
+}
+
+/**
+ * Platform commission rate, in percent of the ticket subtotal. Admins set it
+ * in the settings panel; a missing setting falls back to the platform default,
+ * while a deliberate 0 turns the fee off. This is the single source of truth
+ * for pricing, quoting and reporting.
+ */
+const DEFAULT_SERVICE_FEE_PERCENT = 5;
+
+function serviceFeePercent() {
+  const stored = getSetting('service_fee_percent', null);
+  const raw = Number(stored === null || stored === '' ? DEFAULT_SERVICE_FEE_PERCENT : stored);
+  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 20) : 0;
+}
+
+/**
+ * Platform commission — what the service fee on ticket sales has earned.
+ *
+ * Only settled (successful) ticket transactions count towards the earned
+ * figure; anything still awaiting confirmation or refunded is reported
+ * separately so the headline number can never overstate income.
+ */
+function platformCommission() {
+  return db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN status = 'successful' THEN fee_cents ELSE 0 END), 0) AS settled,
+      COALESCE(SUM(CASE WHEN status = 'successful' AND created_at >= datetime('now','-30 days')
+                        THEN fee_cents ELSE 0 END), 0) AS last_30_days,
+      COALESCE(SUM(CASE WHEN status IN ('pending','processing') THEN fee_cents ELSE 0 END), 0) AS pending,
+      COALESCE(SUM(CASE WHEN status = 'refunded' THEN fee_cents ELSE 0 END), 0) AS refunded,
+      COUNT(CASE WHEN status = 'successful' AND fee_cents > 0 THEN 1 END) AS settled_count
+    FROM transactions
+    WHERE purpose = 'ticket'
+  `).get();
 }
 
 function platformRevenue() {
@@ -605,6 +651,9 @@ module.exports = {
   listTransactions,
   ledgerForUser,
   platformRevenue,
+  platformCommission,
+  serviceFeePercent,
+  DEFAULT_SERVICE_FEE_PERCENT,
   money,
   STATUSES,
 };

@@ -34,7 +34,9 @@ export default function Login() {
     try {
       const data = await login(form.email.trim(), form.password);
       toast(`Signed in as ${data.user.name}`, 'success');
-      navigate(location.state?.from || (data.user.role === 'admin' ? '/admin' : '/'), { replace: true });
+      // Straight to the home page after signing in. Only an interrupted
+      // attempt at a protected page sends the user back to where they were going.
+      navigate(location.state?.from || '/', { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {

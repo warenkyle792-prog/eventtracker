@@ -47,6 +47,47 @@ router.get('/overview', (_req, res) => {
 
   const revenue = payments.platformRevenue();
   const promotionRevenue = promotions.revenueSummary();
+  const commission = payments.platformCommission();
+
+  /**
+   * Tickets sold: every ticket that reached a holder, split into paid orders
+   * and free registrations so the paid figure is never inflated by free RSVPs.
+   */
+  const ticketsSold = db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      COUNT(CASE WHEN t.status = 'used' THEN 1 END) AS checked_in,
+      COUNT(CASE WHEN t.status = 'refunded' THEN 1 END) AS refunded,
+      COUNT(CASE WHEN x.id IS NOT NULL AND x.method != 'free' THEN 1 END) AS paid,
+      COUNT(CASE WHEN x.id IS NULL OR x.method = 'free' THEN 1 END) AS free
+    FROM tickets t
+    LEFT JOIN transactions x ON x.id = t.transaction_id
+  `).get();
+
+  /** Commission and ticket sales per event — what every ticket earned us. */
+  const commissionByEvent = db.prepare(`
+    SELECT e.id, e.title, e.city, e.starts_at,
+           (SELECT COUNT(*) FROM tickets t
+             WHERE t.event_id = e.id AND t.status IN ('valid','used')) AS tickets_sold,
+           (SELECT COUNT(*) FROM tickets t
+             WHERE t.event_id = e.id AND t.status = 'refunded') AS tickets_refunded,
+           (SELECT COALESCE(SUM(x.amount_cents), 0) FROM transactions x
+             WHERE x.event_id = e.id AND x.status = 'successful' AND x.purpose = 'ticket') AS gross_cents,
+           (SELECT COALESCE(SUM(x.fee_cents), 0) FROM transactions x
+             WHERE x.event_id = e.id AND x.status = 'successful' AND x.purpose = 'ticket') AS commission_cents,
+           (SELECT COALESCE(SUM(x.fee_cents), 0) FROM transactions x
+             WHERE x.event_id = e.id AND x.status = 'refunded' AND x.purpose = 'ticket') AS commission_refunded_cents
+    FROM events e
+    WHERE (SELECT COUNT(*) FROM tickets t WHERE t.event_id = e.id) > 0
+    ORDER BY commission_cents DESC, tickets_sold DESC
+    LIMIT 12
+  `).all().map((row) => ({
+    ...row,
+    gross_formatted: money.format(row.gross_cents, money.DEFAULT_CURRENCY),
+    commission_formatted: money.format(row.commission_cents, money.DEFAULT_CURRENCY),
+    commission_refunded_formatted: money.format(row.commission_refunded_cents, money.DEFAULT_CURRENCY),
+    net_formatted: money.format(row.gross_cents - row.commission_cents, money.DEFAULT_CURRENCY),
+  }));
 
   const daily = db.prepare(`
     SELECT date(created_at) AS day,
@@ -67,9 +108,14 @@ router.get('/overview', (_req, res) => {
     SELECT e.id, e.title, e.starts_at, e.city,
            (SELECT COUNT(*) FROM tickets t WHERE t.event_id = e.id AND t.status IN ('valid','used')) AS tickets,
            (SELECT COALESCE(SUM(x.amount_cents),0) FROM transactions x
-             WHERE x.event_id = e.id AND x.status = 'successful') AS revenue_cents
+             WHERE x.event_id = e.id AND x.status = 'successful') AS revenue_cents,
+           (SELECT COALESCE(SUM(x.fee_cents),0) FROM transactions x
+             WHERE x.event_id = e.id AND x.status = 'successful' AND x.purpose = 'ticket') AS commission_cents
     FROM events e ORDER BY tickets DESC, revenue_cents DESC LIMIT 6
-  `).all();
+  `).all().map((row) => ({
+    ...row,
+    commission_formatted: money.format(row.commission_cents, money.DEFAULT_CURRENCY),
+  }));
 
   const recent = db.prepare(`
     SELECT x.*, u.name AS user_name, u.username AS user_username, e.title AS event_title
@@ -88,6 +134,22 @@ router.get('/overview', (_req, res) => {
       refunded_formatted: money.format(revenue.refunded, money.DEFAULT_CURRENCY),
       pending_formatted: money.format(revenue.pending, money.DEFAULT_CURRENCY),
     },
+    tickets_sold: {
+      ...ticketsSold,
+      paid_formatted: String(ticketsSold.paid),
+    },
+    commission: {
+      ...commission,
+      percent: payments.serviceFeePercent(),
+      settled_formatted: money.format(commission.settled, money.DEFAULT_CURRENCY),
+      last_30_days_formatted: money.format(commission.last_30_days, money.DEFAULT_CURRENCY),
+      pending_formatted: money.format(commission.pending, money.DEFAULT_CURRENCY),
+      refunded_formatted: money.format(commission.refunded, money.DEFAULT_CURRENCY),
+      average_per_transaction_cents: commission.settled_count
+        ? Math.round(commission.settled / commission.settled_count)
+        : 0,
+    },
+    commission_by_event: commissionByEvent,
     promotion_revenue: {
       ...promotionRevenue,
       settled_formatted: money.format(promotionRevenue.settled_revenue_cents, money.DEFAULT_CURRENCY),
@@ -120,6 +182,9 @@ router.get('/transactions', (req, res) => {
       settled: money.format(result.totals.settled, money.DEFAULT_CURRENCY),
       pending: money.format(result.totals.pending, money.DEFAULT_CURRENCY),
       refunded: money.format(result.totals.refunded, money.DEFAULT_CURRENCY),
+      commission: money.format(result.totals.commission, money.DEFAULT_CURRENCY),
+      commission_pending: money.format(result.totals.commission_pending, money.DEFAULT_CURRENCY),
+      commission_refunded: money.format(result.totals.commission_refunded, money.DEFAULT_CURRENCY),
     },
   });
 });
@@ -327,7 +392,7 @@ router.post('/promotions/:id/end', (req, res) => {
 router.get('/settings', (_req, res) => {
   res.json({
     settings: {
-      service_fee_percent: getSetting('service_fee_percent', '0'),
+      service_fee_percent: getSetting('service_fee_percent', '5'),
       support_email: getSetting('support_email', 'support@eventtracker.app'),
       platform_currency: getSetting('platform_currency', money.DEFAULT_CURRENCY),
       payouts_enabled: getSetting('payouts_enabled', 'false'),

@@ -21,10 +21,8 @@ const router = express.Router();
  * Helpers
  * ------------------------------------------------------------------ */
 
-function serviceFeePercent() {
-  const raw = Number(getSetting('service_fee_percent', '0'));
-  return Number.isFinite(raw) && raw > 0 ? Math.min(raw, 20) : 0;
-}
+/** Commission rate — owned by the payment service so pricing and reports agree. */
+const serviceFeePercent = payments.serviceFeePercent;
 
 /**
  * Build a validated cart from the client's selection.
@@ -207,6 +205,7 @@ router.post('/intents', requireAuth, async (req, res, next) => {
       currency: cart.currency,
       method,
       eventId: cart.event.id,
+      feeCents: cart.service_fee_cents,
       payerPhone: phone,
       payerEmail: email || req.user?.email,
       metadata: {

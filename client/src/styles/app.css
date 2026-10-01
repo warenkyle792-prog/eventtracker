@@ -2639,6 +2639,17 @@ html[data-theme='dark'] .table th { background: rgba(255, 255, 255, 0.02); }
 .table tbody tr:hover { background: var(--surface-2); }
 .table td strong { color: var(--text-0); font-weight: 600; }
 
+/* Totals row — separated by a rule, not a heavy fill. */
+.table tfoot td {
+  padding: 12px var(--s-4);
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-0);
+  white-space: nowrap;
+}
+
+html[data-theme='dark'] .table tfoot td { background: rgba(255, 255, 255, 0.03); }
+
 .chart {
   display: flex;
   align-items: flex-end;

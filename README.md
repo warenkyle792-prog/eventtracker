@@ -37,9 +37,13 @@ database and a bundled demo dataset (cover artwork included, no external assets)
   stock and per-user limits enforced before an intent is created
 - Idempotent intent creation, provider verification, webhook/callback handling
   and a polling endpoint for the client
+- Platform commission: a configurable service fee (5% by default, editable in
+  Admin → Settings) is charged on the ticket subtotal, shown in the checkout
+  summary before payment, and stored on the transaction as `fee_cents` so
+  commission is a ledger figure rather than something calculated after the fact
 - Statuses: `pending`, `processing`, `successful`, `failed`, `cancelled`,
-  `refunded`. Every transaction stores reference, user, event, amount, currency,
-  method, status, provider reference and timestamps
+  `refunded`. Every transaction stores reference, user, event, amount, fee,
+  currency, method, status, provider reference and timestamps
 - No provider secret ever reaches the browser, and a payment is never treated as
   successful because the client said so
 
@@ -66,9 +70,13 @@ database and a bundled demo dataset (cover artwork included, no external assets)
   (typing indicators, presence, REST fallback)
 
 **Administration**
-- Overview dashboard: revenue, 14-day volume chart, payment-method split,
-  best-performing events, provider modes
-- Transactions with filters, detail drawer, provider re-check and refunds
+- Overview dashboard: commission earned, tickets sold (paid vs free), gross
+  revenue, promotion revenue, a per-event commission table with the organiser's
+  net, 14-day volume chart, payment-method split, best-performing events and
+  provider modes
+- Transactions with filters, a commission column and total, detail drawer
+  (including the commission kept and the organiser's net), provider re-check and
+  refunds
 - Event feature/cancel/delete, user role management, campaign control,
   commerce settings and an audit log of privileged actions
 

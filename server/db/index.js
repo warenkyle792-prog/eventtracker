@@ -244,6 +244,8 @@ const SCHEMA = `
     promotion_id INTEGER,
     purpose TEXT NOT NULL DEFAULT 'ticket',
     amount_cents INTEGER NOT NULL DEFAULT 0,
+    -- platform commission kept on this transaction (service fee on tickets)
+    fee_cents INTEGER NOT NULL DEFAULT 0,
     currency TEXT NOT NULL DEFAULT 'KES',
     method TEXT NOT NULL DEFAULT 'mpesa',
     provider TEXT NOT NULL DEFAULT 'mpesa',
@@ -410,7 +412,8 @@ const MIGRATIONS = [
   ['events', 'contact_phone', "TEXT DEFAULT ''"],
   ['events', 'status', "TEXT NOT NULL DEFAULT 'published'"],
   ['events', 'views', 'INTEGER DEFAULT 0'],
-  ['events', 'currency', "TEXT DEFAULT 'KES'"]
+  ['events', 'currency', "TEXT DEFAULT 'KES'"],
+  ['transactions', 'fee_cents', 'INTEGER NOT NULL DEFAULT 0']
 ];
 
 function columnExists(table, column) {

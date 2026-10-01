@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  Activity, AlertTriangle, BadgeCheck, Ban, BarChart3, CalendarDays, CheckCircle2, Crown,
-  Eye, Megaphone, Receipt, RefreshCw, Search, Settings2, ShieldCheck, Trash2, TrendingUp,
-  Users, Wallet,
+  Activity, AlertTriangle, BadgeCheck, Ban, BarChart3, CalendarDays, CheckCircle2, Coins, Crown,
+  Eye, Megaphone, Percent, Receipt, RefreshCw, Search, Settings2, ShieldCheck, Ticket, Trash2,
+  TrendingUp, Users, Wallet,
 } from 'lucide-react';
 
 import {
@@ -87,20 +87,82 @@ function Overview() {
 
   const counts = data.counts;
   const revenue = data.revenue;
+  const commission = data.commission;
+  const sold = data.tickets_sold;
+  const commission_by_event = data.commission_by_event || [];
   const peak = Math.max(1, ...data.daily.map((day) => Number(day.amount || 0)));
 
   return (
     <>
       <div className="stat-grid">
+        <StatCard label="Commission earned" value={commission.settled_formatted} icon={<Coins size={16} />}
+          foot={`${commission.percent}% of every ticket · ${commission.pending_formatted} still pending`} />
+        <StatCard label="Tickets sold" value={sold.total} icon={<Ticket size={16} />}
+          foot={`${sold.paid} paid · ${sold.free} free · ${sold.checked_in} checked in`} />
         <StatCard label="Gross revenue" value={revenue.settled_formatted} icon={<Wallet size={16} />}
-          foot={`${formatMoney(revenue.pending, 'KES')} awaiting confirmation`} />
-        <StatCard label="Last 30 days" value={revenue.last_30_days_formatted} icon={<TrendingUp size={16} />}
-          foot={`${data.counts.new_users} new members this week`} />
-        <StatCard label="Tickets issued" value={counts.tickets} icon={<BadgeCheck size={16} />}
-          foot={`${counts.checked_in} checked in at the door`} />
+          foot={`${revenue.last_30_days_formatted} in the last 30 days`} />
         <StatCard label="Promotion revenue" value={data.promotion_revenue.settled_formatted} icon={<Megaphone size={16} />}
           foot={`${counts.active_promotions} campaigns running`} />
       </div>
+
+      <section className="section">
+        <SectionHead
+          title="Ticket sales & commission"
+          sub={`What every ticket earned the platform — ${commission.percent}% service fee on the ticket subtotal`}
+          link={<button className="btn btn--ghost btn--sm" onClick={reload}><RefreshCw size={14} /> Refresh</button>}
+        />
+        <div className="grid grid--3" style={{ gap: 'var(--s-4)' }}>
+          <StatCard label="Settled commission" value={commission.settled_formatted} icon={<Coins size={16} />}
+            foot={`${commission.settled_count} paid orders`} />
+          <StatCard label="Awaiting confirmation" value={commission.pending_formatted} icon={<Percent size={16} />}
+            foot="Earned once the provider confirms" />
+          <StatCard label="Refunded commission" value={commission.refunded_formatted} icon={<Receipt size={16} />}
+            foot={`${sold.refunded} tickets refunded`} />
+        </div>
+
+        <div className="table-wrap mt-5">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Event</th><th>Tickets sold</th><th>Gross collected</th><th>Commission</th><th>Organiser net</th>
+              </tr>
+            </thead>
+            <tbody>
+              {commission_by_event.map((event) => (
+                <tr key={event.id}>
+                  <td>
+                    <Link to={`/events/${event.id}`} className="medium">{event.title}</Link>
+                    <div className="tiny dim">{event.city || 'Online'} · {relativeDay(event.starts_at)}</div>
+                  </td>
+                  <td className="small">
+                    {event.tickets_sold}
+                    {event.tickets_refunded > 0 && <div className="tiny dim">{event.tickets_refunded} refunded</div>}
+                  </td>
+                  <td className="small">{event.gross_formatted}</td>
+                  <td className="medium">{event.commission_formatted}</td>
+                  <td className="small muted">{event.net_formatted}</td>
+                </tr>
+              ))}
+              {commission_by_event.length === 0 && (
+                <tr>
+                  <td colSpan={5}><p className="muted small">No tickets sold yet — commission appears here as orders settle.</p></td>
+                </tr>
+              )}
+            </tbody>
+            {commission_by_event.length > 0 && (
+              <tfoot>
+                <tr>
+                  <td className="medium">All events</td>
+                  <td className="medium">{sold.total}</td>
+                  <td className="medium">{revenue.settled_formatted}</td>
+                  <td className="medium">{commission.settled_formatted}</td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </section>
 
       <div className="grid grid--2 mt-6" style={{ gap: 'var(--s-5)' }}>
         <div className="panel panel--pad">
@@ -190,6 +252,7 @@ function Overview() {
                   <td className="small">{transaction.event_title || '—'}</td>
                   <td className="small">{transaction.method === 'mpesa' ? 'M-Pesa' : transaction.method}</td>
                   <td className="medium">{transaction.amount_formatted}</td>
+                  <td className="small">{transaction.fee_cents > 0 ? transaction.fee_formatted : <span className="dim">—</span>}</td>
                   <td><StatusPill status={transaction.status} /></td>
                   <td className="small muted">{relativeDay(transaction.created_at)}</td>
                 </tr>
@@ -208,7 +271,9 @@ function Overview() {
                 <span className="medium truncate" style={{ display: 'block' }}>{event.title}</span>
                 <span className="small muted">{relativeDay(event.starts_at)} · {event.city || 'Online'}</span>
               </span>
-              <span className="tiny dim nowrap">{event.tickets} tickets</span>
+              <span className="tiny dim nowrap" style={{ textAlign: 'right' }}>
+                {event.tickets} tickets<div>{event.commission_formatted} commission</div>
+              </span>
             </Link>
           ))}
         </div>
@@ -293,6 +358,7 @@ function Transactions() {
       {data && (
         <div className="row row--tight mt-4" style={{ flexWrap: 'wrap', gap: 10 }}>
           <span className="badge">Settled {data.totals_formatted.settled}</span>
+          <span className="badge badge--ok">Commission {data.totals_formatted.commission}</span>
           <span className="badge">Pending {data.totals_formatted.pending}</span>
           <span className="badge">Refunded {data.totals_formatted.refunded}</span>
           <span className="badge">{data.total} transactions</span>
@@ -307,7 +373,7 @@ function Transactions() {
             <thead>
               <tr>
                 <th>Reference</th><th>Customer</th><th>Purpose</th><th>Method</th>
-                <th>Amount</th><th>Status</th><th>Created</th><th />
+                <th>Amount</th><th>Commission</th><th>Status</th><th>Created</th><th />
               </tr>
             </thead>
             <tbody>
@@ -358,6 +424,13 @@ function Transactions() {
               <div><span className="eyebrow">Customer</span>{detail.user?.name} <div className="tiny dim">@{detail.user?.username}</div></div>
               <div><span className="eyebrow">Event</span>{detail.event?.title || '—'}</div>
               <div><span className="eyebrow">Amount</span>{detail.transaction.amount_formatted}</div>
+              <div>
+                <span className="eyebrow">Platform commission</span>
+                {detail.transaction.fee_cents > 0 ? detail.transaction.fee_formatted : '—'}
+                {detail.transaction.fee_cents > 0 && (
+                  <div className="tiny dim">organiser net {formatMoney(detail.transaction.net_cents, detail.transaction.currency)}</div>
+                )}
+              </div>
               <div><span className="eyebrow">Method</span>{detail.transaction.method}</div>
               <div><span className="eyebrow">Provider reference</span><span className="mono small">{detail.transaction.provider_reference || '—'}</span></div>
               <div><span className="eyebrow">Created</span>{detail.transaction.created_at}</div>
